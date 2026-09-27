@@ -63,6 +63,21 @@ public class AgentPackServiceTest {
         assertThrows(IOException.class, () -> AgentPackService.portablePackageSpec("https://user:secret@example.test/mod"));
     }
 
+    /// The default export selection includes instance metadata but never a Provider or API key value.
+    @Test
+    public void defaultExportSelectionIsPortableAndSecretFree() throws Exception {
+        AgentInstance instance = instance("portable", "");
+        AgentPackService.ExportOptions options = AgentPackService.ExportOptions.defaults(instance);
+        assertTrue(options.includeCore());
+        assertTrue(options.includeProfile());
+        assertTrue(options.includeModel());
+        assertTrue(options.includeExtensions());
+        assertFalse(options.includeProvider());
+        String json = org.jackhuang.hmcl.util.gson.JsonUtils.GSON.toJson(options);
+        assertFalse(json.contains("apiKey"));
+        assertFalse(json.contains("secret"));
+    }
+
     /// Discarding a failed commit removes only its generated directory, not another managed instance.
     @Test
     public void failedCommitCleanupPreservesSibling() throws Exception {
