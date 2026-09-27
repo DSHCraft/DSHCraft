@@ -19,8 +19,8 @@ hmcl-ui/.local/
 hmcl-ui/build/
 hmcl-ui/HMCL/build/
 src-tauri/target/
-instances/
-runtimes/
+/instances/
+/runtimes/
 .env
 .env.*
 !.env.example
