@@ -1,5 +1,11 @@
 # Changelog
 
+## Public source repository - 2026-09-27
+
+- Published the Java/HMCL source to `DSHCraft/DSHCraft` on GitHub. GitHub Actions Java/HMCL CI passes on Linux, and a clean Windows build passes locally.
+- Corrected the Windows icon helper path, preserved the Gradle wrapper executable bit, and narrowed the root `.gitignore` so HMCL's `ui/instances` sources are included.
+- No binary Release was created; executable signing and redistributed dependency license review remain open.
+
 ## Select installed DSH Core per instance - 2026-09-27
 
 - Changed the instance Core selector to list only complete versions in the launcher-managed runtime cache. Added a separate action to browse the online release catalog; install still targets the isolated launcher runtime.

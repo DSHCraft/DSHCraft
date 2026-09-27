@@ -1,10 +1,8 @@
 # Open source release checklist
 
-This repository is being prepared for a source release. The following boundaries are intentional:
+The Java/HMCL source is published at https://github.com/DSHCraft/DSHCraft on `main`. The first public source commit and follow-up build fixes are pushed; GitHub Actions Java/HMCL CI passes on Linux, and a clean Windows `:HMCL:build` passes locally.
 
-The public GitHub repository is https://github.com/DSHCraft/DSHCraft. The local handoff directory has no Git metadata, so source must first be staged in a clean clone before it can be committed and pushed. Source publication is separate from a compiled Release: do not attach the unsigned local executable or Debian package as a release artifact.
-
-The source tree is ready for a first public Git push after reviewing the staged file list and diff. Keep the repository focused on the Java/HMCL product, build scripts, tests, legal notices, and maintainer documentation. Exclude local caches, generated binaries, source ZIP archives, old React/Tauri recovery material, updater credentials, and user/runtime data.
+Source publication is separate from a compiled Release. Do not attach the unsigned local executable or Debian package as a release artifact. Keep the repository focused on the Java/HMCL product, build scripts, tests, legal notices, and maintainer documentation. Exclude local caches, generated binaries, source ZIP archives, old React/Tauri recovery material, updater credentials, and user/runtime data.
 
 - The top-level `LICENSE` and this source tree use GPL-3.0-or-later for DSHCraft launcher code.
 - `hmcl-ui/` is the GPL HMCL derivative and retains its original source notices and license. The Java JAR embeds the project GPL and source notices under `META-INF/dshcraft/`.

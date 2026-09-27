@@ -30,7 +30,7 @@ $excludes = @(
     '*/build', '*/.gradle', '*/.idea', '*/.hmcl', '*/.local', '*/out',
     'hmcl-ui/.github', 'hmcl-ui/.gitee', 'hmcl-ui/.cnb',
     '*.class', '*.log', '*.exe', '*.deb', '*.pfx', '*.p12',
-    '*.key', '*.key.pem', '*.private', '*.sigstore', '*.p12', '*.pfx',
+    '*.key', '*.key.pem', '*.private', '*.sigstore',
     '*.jks', '*.env', '*.env.*', '*.tsbuildinfo',
     'hmcl-ui/DSHCRAFT_PATCH.diff', 'hmcl-ui/DSHCRAFT_UI_BASELINE.sha256'
 )
