@@ -47,6 +47,7 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import static org.jackhuang.hmcl.util.logging.Logger.LOG;
 
@@ -64,6 +65,13 @@ public final class AgentRepository {
     private static final int MAX_CONSOLE_LINES = 2000;
     /// Maximum characters displayed from one process output line.
     private static final int MAX_CONSOLE_LINE_LENGTH = 4096;
+    /// Environment names that can change the launcher or Node execution itself.
+    private static final @Unmodifiable Set<String> RESERVED_ENV_NAMES = Set.of(
+            "DSH_HOME", "DSH_PROFILE", "DSH_WEB_PORT", "NODE_OPTIONS", "NODE_PATH",
+            "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "PATH", "PATHEXT", "COMSPEC");
+    /// Secret-like names are never accepted from persisted per-instance environment entries.
+    private static final Pattern SECRET_ENV_NAME = Pattern.compile(
+            "(?i).*(?:KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL).*" );
     /// Verified official Bundle catalog entries; their installed state is instance-local.
     private static final @Unmodifiable List<AgentExtension> OFFICIAL_MODS = List.of(
             new AgentExtension("codex-subagent", "Codex Subagent", "Bundle", "@deepseek-ai/dsh-subagent-codex", false),
@@ -645,7 +653,9 @@ public final class AgentRepository {
         for (Map.Entry<Object, Object> entry : raw.entrySet()) {
             String key = String.valueOf(entry.getKey());
             if (key.startsWith(envPrefix) && key.length() > envPrefix.length()) {
-                putIfNotBlank(builder.environment(), key.substring(envPrefix.length()), String.valueOf(entry.getValue()));
+                String environmentName = key.substring(envPrefix.length());
+                validateInstanceEnvironmentName(environmentName);
+                putIfNotBlank(builder.environment(), environmentName, String.valueOf(entry.getValue()));
             }
         }
         builder.environment().put("DSH_HOME", dshHome.toString());
@@ -748,6 +758,7 @@ public final class AgentRepository {
         if (apiKeyEnv == null || !apiKeyEnv.matches("[A-Za-z_][A-Za-z0-9_]{0,127}")) {
             throw new IOException("Provider API Key environment variable name is invalid");
         }
+        validateProviderEnvironmentName(apiKeyEnv);
         String yaml = "llm-pi-ai:\n"
                 + "  providers:\n"
                 + "    " + yamlScalar(providerId) + ":\n"
@@ -771,6 +782,27 @@ public final class AgentRepository {
     private static @Nullable String apiKeyForLogRedaction(Map<String, String> environment) {
         String key = environment.get("DSH_LAUNCHER_PROVIDER_API_KEY");
         return key == null || key.isBlank() ? environment.get("DEEPSEEK_API_KEY") : key;
+    }
+
+    /// Rejects persisted instance variables that could inject secrets or alter launcher execution.
+    static void validateInstanceEnvironmentName(String name) throws IOException {
+        if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_]{0,127}")) {
+            throw new IOException("Instance environment variable name is invalid: " + name);
+        }
+        String upper = name.toUpperCase(java.util.Locale.ROOT);
+        if (RESERVED_ENV_NAMES.contains(upper) || upper.startsWith("DSHCRAFT_")
+                || upper.startsWith("PNPM_CONFIG_") || SECRET_ENV_NAME.matcher(upper).matches()) {
+            throw new IOException("Instance environment variable is reserved or secret-bearing: " + name);
+        }
+    }
+
+    /// Rejects Provider key references that could alter Node, Java, or DSH execution.
+    static void validateProviderEnvironmentName(String name) throws IOException {
+        String upper = name.toUpperCase(java.util.Locale.ROOT);
+        if (RESERVED_ENV_NAMES.contains(upper) || upper.startsWith("DSHCRAFT_")
+                || upper.startsWith("PNPM_CONFIG_")) {
+            throw new IOException("Provider API Key environment variable is reserved: " + name);
+        }
     }
 
     /// Drains one process stream on a daemon thread and forwards bounded lines to JavaFX.
@@ -872,7 +904,11 @@ public final class AgentRepository {
         Process stopping = process;
         if (stopping == null) return;
         webUrl.set("");
-        if (!stopping.isAlive()) return;
+        if (!stopping.isAlive()) {
+            if (process == stopping) process = null;
+            running.set(false);
+            return;
+        }
         stopping.descendants().forEach(ProcessHandle::destroyForcibly);
         stopping.destroyForcibly();
         try {

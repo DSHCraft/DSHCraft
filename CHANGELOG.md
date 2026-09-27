@@ -1,5 +1,12 @@
 # Changelog
 
+## Runtime safety and bounded network input - 2026-09-27
+
+- Reject persisted instance environment entries that could contain secrets or alter Node, Java, DSH, or pnpm execution.
+- Reject Provider API-key environment references that target launcher or runtime control variables.
+- Bound Provider model, npm metadata, and extension-catalog responses before JSON parsing.
+- Clear stale process state when an instance has already exited before Stop is pressed.
+
 ## Public source repository - 2026-09-27
 
 - Published the Java/HMCL source to `DSHCraft/DSHCraft` on GitHub. GitHub Actions Java/HMCL CI passes on Linux, and a clean Windows build passes locally.

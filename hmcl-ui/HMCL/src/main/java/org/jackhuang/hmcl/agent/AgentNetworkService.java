@@ -13,6 +13,7 @@ import com.google.gson.JsonParser;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -41,6 +42,12 @@ public final class AgentNetworkService {
     public static final String OFFICIAL_REGISTRY = "https://registry.npmjs.org";
     /// Shared HTTP client with bounded connection latency.
     private static final HttpClient HTTP = createHttpClient();
+    /// Provider model responses are metadata and must not consume unbounded launcher memory.
+    private static final int MAX_PROVIDER_RESPONSE_BYTES = 1 * 1024 * 1024;
+    /// npm metadata may contain many versions but remains bounded before JSON parsing.
+    private static final int MAX_NPM_RESPONSE_BYTES = 8 * 1024 * 1024;
+    /// Extension catalogs are intentionally smaller than npm package metadata.
+    private static final int MAX_EXTENSION_RESPONSE_BYTES = 4 * 1024 * 1024;
 
     /// Prevents construction of this utility class.
     private AgentNetworkService() {
@@ -95,15 +102,16 @@ public final class AgentNetworkService {
                         builder.header("Authorization", "Bearer " + secret.trim());
                     }
                 }
-                HttpResponse<String> response = HTTP.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-                if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    throw new IOException("Provider returned HTTP " + response.statusCode() + " for " + url);
+                HttpResponse<InputStream> response = HTTP.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
+                try (InputStream body = response.body()) {
+                    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                        throw new IOException("Provider returned HTTP " + response.statusCode() + " for " + url);
+                    }
+                    List<String> models = parseModels(readBounded(body, MAX_PROVIDER_RESPONSE_BYTES,
+                            "Provider model response"));
+                    if (!models.isEmpty()) return models;
+                    last = new IOException("Provider returned no model IDs from " + url);
                 }
-                List<String> models = parseModels(response.body());
-                if (!models.isEmpty()) {
-                    return models;
-                }
-                last = new IOException("Provider returned no model IDs from " + url);
             } catch (IllegalArgumentException | IOException e) {
                 last = e instanceof IOException io ? io : new IOException("Invalid provider URL: " + url, e);
             }
@@ -126,13 +134,17 @@ public final class AgentNetworkService {
                 .header("User-Agent", "DShCraft-Agent-Launcher")
                 .GET()
                 .build();
-        HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("npm registry returned HTTP " + response.statusCode());
+        HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        String responseBody;
+        try (InputStream body = response.body()) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IOException("npm registry returned HTTP " + response.statusCode());
+            }
+            responseBody = readBounded(body, MAX_NPM_RESPONSE_BYTES, "npm registry response");
         }
         JsonObject root;
         try {
-            root = JsonParser.parseString(response.body()).getAsJsonObject();
+            root = JsonParser.parseString(responseBody).getAsJsonObject();
         } catch (RuntimeException e) {
             throw new IOException("npm registry returned malformed JSON", e);
         }
@@ -207,16 +219,17 @@ public final class AgentNetworkService {
                 .header("User-Agent", "DShCraft-Agent-Launcher")
                 .GET()
                 .build();
-        HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Extension catalog returned HTTP " + response.statusCode());
-        }
-        if (response.body().length() > 4 * 1024 * 1024) {
-            throw new IOException("Extension catalog is too large");
+        HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        String responseBody;
+        try (InputStream body = response.body()) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IOException("Extension catalog returned HTTP " + response.statusCode());
+            }
+            responseBody = readBounded(body, MAX_EXTENSION_RESPONSE_BYTES, "Extension catalog response");
         }
         JsonElement root;
         try {
-            root = JsonParser.parseString(response.body());
+            root = JsonParser.parseString(responseBody);
         } catch (RuntimeException e) {
             throw new IOException("Extension catalog returned malformed JSON", e);
         }
@@ -245,6 +258,13 @@ public final class AgentNetworkService {
             result.add(new ExtensionCatalogEntry(id, name, kind, packageSpec, enabled));
         }
         return List.copyOf(result);
+    }
+
+    /// Reads UTF-8 response data with a byte limit before allocating a JSON string.
+    private static String readBounded(InputStream input, int maximum, String label) throws IOException {
+        byte[] contents = input.readNBytes(maximum + 1);
+        if (contents.length > maximum) throw new IOException(label + " is too large");
+        return new String(contents, StandardCharsets.UTF_8);
     }
 
     /// Parses common OpenAI-compatible model-list response shapes into sorted unique IDs.
