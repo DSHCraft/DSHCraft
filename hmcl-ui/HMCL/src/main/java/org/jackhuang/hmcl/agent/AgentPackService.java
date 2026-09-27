@@ -42,9 +42,15 @@ public final class AgentPackService {
     private AgentPackService() {
     }
 
-    /// Exports one instance and its referenced extension metadata without workspace paths, secrets or sessions.
+    /// Exports one instance using the default portable selection: all safe metadata, no Provider route or API key.
     public static void exportInstance(AgentRepository repository, AgentInstance instance, Path output) throws IOException {
-        Set<String> referenced = new LinkedHashSet<>(parseIds(instance.extensionIdsProperty().get()));
+        exportInstance(repository, instance, output, ExportOptions.defaults(instance));
+    }
+
+    /// Exports one instance using an explicit selection without workspace paths, secrets or sessions.
+    public static void exportInstance(AgentRepository repository, AgentInstance instance, Path output,
+                                      ExportOptions options) throws IOException {
+        Set<String> referenced = new LinkedHashSet<>(parseIds(options.extensionIds()));
         List<PackExtension> extensions = new ArrayList<>();
         for (String id : referenced) {
             AgentExtension extension = repository.getExtensions().stream()
@@ -62,29 +68,51 @@ public final class AgentPackService {
             extensions.add(new PackExtension(id, extension.getName(), kind.toLowerCase(Locale.ROOT),
                     spec, repository.hasExtension(instance, extension)));
         }
+        String coreVersion = options.includeCore() ? normalize(options.coreVersion(), "latest") : "";
+        String profileName = options.includeProfile() ? normalize(options.profileName(), "web") : "";
+        String profileTemplate = options.includeProfile() ? normalize(options.profileTemplate(), "web") : "";
+        String webPort = options.includeProfile() ? normalize(options.webPort(), "3080") : "";
         PackMetadata pack = new PackMetadata(
                 "export-" + instance.getId(),
-                instance.getName() + " Pack",
-                instance.descriptionProperty().get(),
-                normalize(instance.coreVersionProperty().get(), "latest"),
-                instance.modelProperty().get(),
+                normalize(options.name(), instance.getName() + " Pack"),
+                normalize(options.description(), instance.descriptionProperty().get()),
+                coreVersion,
+                options.includeModel() ? normalize(options.model(), "") : "",
                 List.copyOf(referenced),
                 List.of("export"),
-                normalize(instance.profileNameProperty().get(), "web"),
-                normalize(instance.profileTemplateProperty().get(), "web"),
-                normalize(instance.webPortProperty().get(), "3080"));
+                profileName,
+                profileTemplate,
+                webPort);
+        ProviderMetadata provider = null;
+        if (options.includeProvider()) {
+            AgentProvider selected = repository.findProvider(instance.providerIdProperty().get());
+            if (selected == null) throw new IOException("Pack Provider is no longer available: " + instance.providerIdProperty().get());
+            provider = new ProviderMetadata(selected.getId(), selected.getName(), selected.typeProperty().get(),
+                    selected.baseUrlProperty().get(), selected.modelProperty().get(),
+                    selected.apiKeyEnvProperty().get(), selected.protocolProperty().get());
+        }
         PackArchive archive = new PackArchive(
                 FORMAT,
                 FORMAT_VERSION,
                 Metadata.VERSION,
                 Instant.now().toString(),
                 pack,
-                extensions);
-        Path parent = output.toAbsolutePath().getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
+                extensions,
+                provider);
+        Path absolute = output.toAbsolutePath().normalize();
+        Path parent = absolute.getParent();
+        if (parent != null) Files.createDirectories(parent);
+        Path staged = Files.createTempFile(parent == null ? Path.of(".").toAbsolutePath() : parent,
+                ".dshcraft-pack-", ".part");
+        try {
+            Files.writeString(staged, JsonUtils.GSON.toJson(archive), StandardCharsets.UTF_8);
+            Files.move(staged, absolute, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+            Files.move(staged, absolute, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(staged);
         }
-        Files.writeString(output, JsonUtils.GSON.toJson(archive), StandardCharsets.UTF_8);
     }
 
     /// Validates a `.dshpack` and prepares a new instance without changing repository state.
@@ -136,7 +164,15 @@ public final class AgentPackService {
             }
         }
 
-        AgentProvider provider = repository.getSelectedProvider();
+        List<AgentProvider> newProviders = new ArrayList<>();
+        AgentProvider provider = archive.provider() == null ? null : repository.findProvider(archive.provider().id());
+        if (provider == null && archive.provider() != null) {
+            ProviderMetadata metadata = archive.provider();
+            provider = new AgentProvider(metadata.id(), metadata.name(), metadata.type(), metadata.baseUrl(),
+                    metadata.model(), metadata.apiKeyEnv(), metadata.protocol());
+            newProviders.add(provider);
+        }
+        if (provider == null) provider = repository.getSelectedProvider();
         if (provider == null && !repository.getProviders().isEmpty()) {
             provider = repository.getProviders().get(0);
         }
@@ -157,7 +193,7 @@ public final class AgentPackService {
                 "dsh",
                 "",
                 "");
-        return new PreparedPack(instance, List.copyOf(newExtensions), List.copyOf(installSpecs));
+        return new PreparedPack(instance, List.copyOf(newExtensions), List.copyOf(installSpecs), List.copyOf(newProviders));
     }
 
     /// Installs the selected Core and package-backed Mods before the instance becomes visible.
@@ -207,6 +243,9 @@ public final class AgentPackService {
         prepared.instance().coreVersionProperty().set(version);
         for (AgentExtension extension : prepared.newExtensions()) {
             repository.addImportedExtension(extension);
+        }
+        for (AgentProvider provider : prepared.newProviders()) {
+            repository.addImportedProvider(provider);
         }
         return repository.addImportedInstance(prepared.instance());
     }
@@ -333,6 +372,28 @@ public final class AgentPackService {
             throw new IOException("Pack metadata collections are missing");
         }
         for (String id : pack.pluginIds()) DshModService.validateInstanceId(id);
+        if (archive.provider() != null) validateProviderMetadata(archive.provider());
+    }
+
+    /// Validates portable Provider routing without accepting credentials in endpoint or environment metadata.
+    private static void validateProviderMetadata(ProviderMetadata provider) throws IOException {
+        DshModService.validateInstanceId(provider.id());
+        if (provider.name() == null || provider.name().isBlank() || provider.baseUrl() == null
+                || provider.baseUrl().isBlank() || provider.protocol() == null
+                || !Set.of("openai-completions", "openai-responses", "anthropic-messages").contains(provider.protocol())) {
+            throw new IOException("Pack Provider metadata is invalid");
+        }
+        AgentRepository.validateProviderEnvironmentName(provider.apiKeyEnv());
+        try {
+            java.net.URI uri = java.net.URI.create(provider.baseUrl());
+            if (!Set.of("http", "https").contains(uri.getScheme().toLowerCase(Locale.ROOT))
+                    || uri.getHost() == null || uri.getUserInfo() != null
+                    || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+                throw new IOException("Pack Provider URL must not contain credentials or query data");
+            }
+        } catch (IllegalArgumentException error) {
+            throw new IOException("Pack Provider URL is invalid", error);
+        }
     }
 
     /// Produces an import-only instance identifier that cannot collide with exported stable IDs by accident.
@@ -358,7 +419,8 @@ public final class AgentPackService {
             String createdWith,
             String exportedAt,
             PackMetadata pack,
-            List<PackExtension> plugins) {
+            List<PackExtension> plugins,
+            ProviderMetadata provider) {
     }
 
     /// Portable instance metadata compatible with the earlier browser pack shape.
@@ -379,8 +441,39 @@ public final class AgentPackService {
     public record PackExtension(String id, String name, String kind, String packageSpec, boolean enabled) {
     }
 
+    /// Portable Provider routing metadata. It never contains an API key value.
+    public record ProviderMetadata(String id, String name, String type, String baseUrl,
+                                   String model, String apiKeyEnv, String protocol) {
+    }
+
+    /// User-selected export fields. API keys are deliberately not represented and cannot be exported.
+    public record ExportOptions(String name, String description, String coreVersion,
+                                String profileName, String profileTemplate, String webPort,
+                                String model, String extensionIds, boolean includeCore,
+                                boolean includeProfile, boolean includeModel, boolean includeExtensions,
+                                boolean includeProvider) {
+        /// Creates the safe default selection from an instance.
+        public static ExportOptions defaults(AgentInstance instance) {
+            return new ExportOptions(instance.getName() + " Pack", instance.descriptionProperty().get(),
+                    instance.coreVersionProperty().get(), instance.profileNameProperty().get(),
+                    instance.profileTemplateProperty().get(), instance.webPortProperty().get(),
+                    instance.modelProperty().get(), instance.extensionIdsProperty().get(),
+                    true, true, true, true, false);
+        }
+
+        /// Returns the extension IDs only when the user opted into extension metadata.
+        public String extensionIds() {
+            return includeExtensions ? extensionIds : "";
+        }
+    }
+
     /// Validated import plan that does not mutate live Launcher state.
     public record PreparedPack(AgentInstance instance, @Unmodifiable List<AgentExtension> newExtensions,
-                               @Unmodifiable List<String> installSpecs) {
+                               @Unmodifiable List<String> installSpecs,
+                               @Unmodifiable List<AgentProvider> newProviders) {
+        /// Compatibility constructor for tests and callers that do not import Provider metadata.
+        public PreparedPack(AgentInstance instance, List<AgentExtension> newExtensions, List<String> installSpecs) {
+            this(instance, newExtensions, installSpecs, List.of());
+        }
     }
 }

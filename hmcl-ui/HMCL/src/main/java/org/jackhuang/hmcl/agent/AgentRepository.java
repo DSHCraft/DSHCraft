@@ -521,6 +521,15 @@ public final class AgentRepository {
         return true;
     }
 
+    /// Adds imported Provider routing metadata without importing any secret value.
+    public synchronized boolean addImportedProvider(AgentProvider provider) {
+        if (findProvider(provider.getId()) != null) return false;
+        wireAutoSave(provider);
+        providers.add(provider);
+        save();
+        return true;
+    }
+
     /// Adds an imported Agent instance while preserving selection and auto-save wiring.
     public synchronized AgentInstance addImportedInstance(AgentInstance instance) {
         wireAutoSave(instance);
@@ -798,6 +807,9 @@ public final class AgentRepository {
 
     /// Rejects Provider key references that could alter Node, Java, or DSH execution.
     static void validateProviderEnvironmentName(String name) throws IOException {
+        if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_]{0,127}")) {
+            throw new IOException("Provider API Key environment variable name is invalid: " + name);
+        }
         String upper = name.toUpperCase(java.util.Locale.ROOT);
         if (RESERVED_ENV_NAMES.contains(upper) || upper.startsWith("DSHCRAFT_")
                 || upper.startsWith("PNPM_CONFIG_")) {

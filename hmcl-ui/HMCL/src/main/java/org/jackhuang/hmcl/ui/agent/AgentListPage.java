@@ -79,11 +79,33 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
             String runTooltip,
             boolean showProviderSidebar,
             boolean showExtensionCatalogAction) {
+        this(title, source, addAction, reloadAction, openAction, selectAction, deleteAction, runAction,
+                selectedPredicate, selectionSignal, addLabel, runTooltip, showProviderSidebar,
+                showExtensionCatalogAction, null);
+    }
+
+    /// Creates an Agent list with an optional instance-specific Pack export action.
+    public AgentListPage(
+            String title,
+            ObservableList<T> source,
+            Supplier<T> addAction,
+            Runnable reloadAction,
+            Consumer<T> openAction,
+            Consumer<T> selectAction,
+            Consumer<T> deleteAction,
+            @Nullable Consumer<T> runAction,
+            Predicate<T> selectedPredicate,
+            @Nullable ObservableValue<?> selectionSignal,
+            String addLabel,
+            String runTooltip,
+            boolean showProviderSidebar,
+            boolean showExtensionCatalogAction,
+            @Nullable Consumer<T> packExportAction) {
         state = new ReadOnlyObjectWrapper<>(State.fromTitle(title));
         this.showProviderSidebar = showProviderSidebar;
         this.showExtensionCatalogAction = showExtensionCatalogAction;
         list = new NativeList(source, addAction, reloadAction, openAction, selectAction, deleteAction,
-                runAction, selectedPredicate, selectionSignal, addLabel, runTooltip);
+                runAction, selectedPredicate, selectionSignal, addLabel, runTooltip, packExportAction);
 
         if (showProviderSidebar) {
             AgentRepository repository = AgentRepository.get();
@@ -156,6 +178,8 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
         private final String addLabel;
         /// Tooltip for the optional rocket action.
         private final String runTooltip;
+        /// Optional instance-specific Pack export action.
+        private final @Nullable Consumer<T> packExportAction;
 
         /// Initializes the shared HMCL list with Agent callbacks.
         private NativeList(
@@ -169,7 +193,8 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
                 Predicate<T> selectedPredicate,
                 @Nullable ObservableValue<?> selectionSignal,
                 String addLabel,
-                String runTooltip) {
+                String runTooltip,
+                @Nullable Consumer<T> packExportAction) {
             super(source);
             this.addAction = addAction;
             this.reloadAction = reloadAction;
@@ -180,6 +205,7 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
             this.selectedPredicate = selectedPredicate;
             this.addLabel = addLabel;
             this.runTooltip = runTooltip;
+            this.packExportAction = packExportAction;
             setRowRefreshSignal(selectionSignal);
         }
 
@@ -270,6 +296,11 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
                 if (runAction != null) {
                     menu.getContent().add(new IconedMenuItem(SVG.ROCKET_LAUNCH, runTooltip,
                             () -> runAction.accept(item), popup));
+                    menu.getContent().add(new MenuSeparator());
+                }
+                if (packExportAction != null) {
+                    menu.getContent().add(new IconedMenuItem(SVG.OUTPUT, i18n("agent.pack.export"),
+                            () -> packExportAction.accept(item), popup));
                     menu.getContent().add(new MenuSeparator());
                 }
                 menu.getContent().add(new IconedMenuItem(SVG.EDIT, i18n("button.edit"),

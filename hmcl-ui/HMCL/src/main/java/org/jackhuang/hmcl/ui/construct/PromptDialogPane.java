@@ -50,7 +50,7 @@ public class PromptDialogPane extends DialogPane {
     public PromptDialogPane(Builder builder) {
         this.builder = builder;
         setTitle(builder.title);
-        setPrefWidth(560);
+        setPrefWidth(builder.prefWidth);
 
         GridPane body = new GridPane();
         body.setVgap(8);
@@ -148,6 +148,7 @@ public class PromptDialogPane extends DialogPane {
         private final List<Question<?>> questions = new ArrayList<>();
         private final String title;
         private final FutureCallback<List<Question<?>>> callback;
+        private double prefWidth = 560;
 
         public Builder(String title, FutureCallback<List<Question<?>>> callback) {
             this.title = title;
@@ -156,6 +157,13 @@ public class PromptDialogPane extends DialogPane {
 
         public <T> Builder addQuestion(Question<T> question) {
             questions.add(question);
+            return this;
+        }
+
+        /// Sets a wider dialog for workflows with multiple related export options.
+        public Builder setPrefWidth(double width) {
+            if (width < 320) throw new IllegalArgumentException("Prompt width is too small");
+            prefWidth = width;
             return this;
         }
 

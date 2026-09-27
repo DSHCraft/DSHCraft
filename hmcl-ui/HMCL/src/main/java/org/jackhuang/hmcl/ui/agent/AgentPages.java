@@ -7,6 +7,7 @@
 package org.jackhuang.hmcl.ui.agent;
 
 import javafx.application.Platform;
+import javafx.scene.Node;
 import javafx.stage.FileChooser;
 import javafx.stage.DirectoryChooser;
 import org.jackhuang.hmcl.agent.AgentBackupService;
@@ -34,6 +35,7 @@ import org.jetbrains.annotations.Unmodifiable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
@@ -49,7 +51,7 @@ public final class AgentPages {
     /// Lazily-created provider list page.
     private static @Nullable AgentListPage<AgentProvider> providers;
     /// Lazily-created instance list page.
-    private static @Nullable AgentListPage<AgentInstance> instances;
+    private static @Nullable AgentInstanceWorkspacePage instances;
     /// Lazily-created extension list page.
     private static @Nullable AgentListPage<AgentExtension> extensions;
     /// Lazily-created settings shell.
@@ -125,23 +127,8 @@ public final class AgentPages {
     }
 
     /// Returns the HMCL-native Agent instance list page.
-    public static AgentListPage<AgentInstance> instances() {
-        if (instances == null) {
-            AgentRepository repo = AgentRepository.get();
-            instances = new AgentListPage<>(
-                    i18n("agent.instances"),
-                    repo.getInstances(),
-                    repo::addInstance,
-                    repo::load,
-                    AgentPages::openInstance,
-                    repo::setSelectedInstance,
-                    AgentPages::removeInstance,
-                    AgentPages::launch,
-                    instance -> instance == repo.getSelectedInstance(),
-                    repo.selectedInstanceProperty(),
-                    i18n("agent.instance.add"),
-                    i18n("agent.launch"), false, false);
-        }
+    public static AgentInstanceWorkspacePage instances() {
+        if (instances == null) instances = new AgentInstanceWorkspacePage();
         return instances;
     }
 
@@ -255,6 +242,11 @@ public final class AgentPages {
 
     /// Opens the instance's Core and launch settings without provider creation controls.
     public static void openInstance(AgentInstance instance) {
+        openInstanceInWorkspace(instance, Controllers::navigate);
+    }
+
+    /// Builds and navigates the version/Profile editor for a selected instance.
+    static void openInstanceInWorkspace(AgentInstance instance, java.util.function.Consumer<Node> display) {
         AgentRepository repository = AgentRepository.get();
         AgentEditorPage page = new AgentEditorPage(instance.getName())
                 .addText(i18n("agent.field.name"), i18n("agent.field.name.instance.subtitle"), instance.nameProperty(), false)
@@ -299,7 +291,14 @@ public final class AgentPages {
                         AgentPages::showConsole)
                 .addAction(i18n("agent.launch"), i18n("agent.launch.subtitle"), SVG.ROCKET_LAUNCH,
                         () -> launch(instance));
-        Controllers.navigate(page);
+        display.accept(page);
+    }
+
+    /// Removes an instance from the embedded workspace after the same confirmation used by the standalone list.
+    static void removeInstanceFromWorkspace(AgentInstance instance) {
+        removeInstance(instance, () -> {
+            if (instances != null) instances.showInstance(AgentRepository.get().getSelectedInstance());
+        });
     }
 
     /// Opens an extension editor using only upstream HMCL controls.
@@ -600,7 +599,7 @@ public final class AgentPages {
             repo.save();
             String version = instance.coreVersionProperty().get().trim();
             if (DshModService.isCoreInstalled(DshModService.runtimeRoot(), version)) {
-                repo.launchSelected();
+                watchLaunchFailure(instance, repo.launchSelected());
                 showConsole();
                 return;
             }
@@ -629,23 +628,29 @@ public final class AgentPages {
                 instance.coreVersionProperty().set(runtime.getFileName().toString());
                 Controllers.showToast(i18n("agent.core.install.success", runtime.getFileName().toString()));
                 try {
-                    repo.launchSelected();
+                    watchLaunchFailure(instance, repo.launchSelected());
                     showConsole();
                 } catch (IOException | RuntimeException error) {
-                    showError(i18n("agent.launch.failed"), error);
+                    showLaunchFailure(instance, error);
                 }
             }));
         } catch (IOException | RuntimeException e) {
-            showError(i18n("agent.launch.failed"), e);
+            showLaunchFailure(instance, e);
         }
     }
 
     /// Confirms deletion of one DSH instance before removing its isolated home.
     private static void removeInstance(AgentInstance instance) {
+        removeInstance(instance, () -> {});
+    }
+
+    /// Confirms deletion and runs a view refresh after the repository selects the next instance.
+    private static void removeInstance(AgentInstance instance, Runnable after) {
         Controllers.confirm(i18n("agent.instance.delete.confirm", instance.getName()),
                 i18n("agent.instance.delete"), () -> {
                     try {
                         AgentRepository.get().removeInstance(instance);
+                        after.run();
                     } catch (IOException error) {
                         showError(i18n("agent.instance.delete.failed"), error);
                     }
@@ -684,21 +689,59 @@ public final class AgentPages {
         }
     }
 
-    /// Exports the selected instance to the v1 JSON `.dshpack` format without secrets, workspace or session data.
+    /// Opens the selected instance's configurable `.dshpack` export flow.
     public static void exportPack(AgentInstance instance) {
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle(i18n("agent.pack.export"));
-        chooser.setInitialFileName(safeFileName(instance.getName()) + ".dshpack");
-        chooser.getExtensionFilters().setAll(new FileChooser.ExtensionFilter(i18n("agent.pack.file"), "*.dshpack", "*.json"));
-        @Nullable Path selected = Controllers.showSaveDialog(chooser);
-        if (selected == null) return;
-        Path output = ensureExtension(selected, ".dshpack");
-        try {
-            AgentPackService.exportInstance(AgentRepository.get(), instance, output);
-            Controllers.dialog(i18n("agent.pack.export.success", output), i18n("message.success"), MessageDialogPane.MessageType.SUCCESS);
-        } catch (IOException | RuntimeException e) {
-            showError(i18n("agent.pack.export.failed"), e);
-        }
+        AgentPackService.ExportOptions defaults = AgentPackService.ExportOptions.defaults(instance);
+        PromptDialogPane.Builder.StringQuestion name = new PromptDialogPane.Builder.StringQuestion(
+                i18n("agent.pack.export.name"), defaults.name()).setPromptText(i18n("agent.pack.export.name.prompt"));
+        PromptDialogPane.Builder.StringQuestion description = new PromptDialogPane.Builder.StringQuestion(
+                i18n("agent.pack.export.description"), defaults.description());
+        PromptDialogPane.Builder.StringQuestion model = new PromptDialogPane.Builder.StringQuestion(
+                i18n("agent.pack.export.model"), defaults.model());
+        PromptDialogPane.Builder.StringQuestion profile = new PromptDialogPane.Builder.StringQuestion(
+                i18n("agent.pack.export.profile"), defaults.profileName());
+        PromptDialogPane.Builder.StringQuestion template = new PromptDialogPane.Builder.StringQuestion(
+                i18n("agent.pack.export.template"), defaults.profileTemplate());
+        PromptDialogPane.Builder.StringQuestion extensions = new PromptDialogPane.Builder.StringQuestion(
+                i18n("agent.pack.export.extensions"), defaults.extensionIds());
+        PromptDialogPane.Builder.BooleanQuestion includeCore = new PromptDialogPane.Builder.BooleanQuestion(
+                i18n("agent.pack.export.include.core"), defaults.includeCore());
+        PromptDialogPane.Builder.BooleanQuestion includeProfile = new PromptDialogPane.Builder.BooleanQuestion(
+                i18n("agent.pack.export.include.profile"), defaults.includeProfile());
+        PromptDialogPane.Builder.BooleanQuestion includeModel = new PromptDialogPane.Builder.BooleanQuestion(
+                i18n("agent.pack.export.include.model"), defaults.includeModel());
+        PromptDialogPane.Builder.BooleanQuestion includeExtensions = new PromptDialogPane.Builder.BooleanQuestion(
+                i18n("agent.pack.export.include.extensions"), defaults.includeExtensions());
+        PromptDialogPane.Builder.BooleanQuestion includeProvider = new PromptDialogPane.Builder.BooleanQuestion(
+                i18n("agent.pack.export.include.provider"), defaults.includeProvider());
+        PromptDialogPane.Builder builder = new PromptDialogPane.Builder(i18n("agent.pack.export"), (questions, handler) -> handler.resolve())
+                .setPrefWidth(760);
+        builder.addQuestion(new PromptDialogPane.Builder.HintQuestion(i18n("agent.pack.export.hint")))
+                .addQuestion(name).addQuestion(description).addQuestion(includeCore).addQuestion(includeProfile)
+                .addQuestion(profile).addQuestion(template).addQuestion(includeModel).addQuestion(model)
+                .addQuestion(includeExtensions).addQuestion(extensions).addQuestion(includeProvider)
+                .addQuestion(new PromptDialogPane.Builder.HintQuestion(i18n("agent.pack.export.api.never")));
+        Controllers.prompt(builder).thenAccept(ignored -> {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle(i18n("agent.pack.export"));
+            chooser.setInitialFileName(safeFileName(name.getValue()) + ".dshpack");
+            chooser.getExtensionFilters().setAll(new FileChooser.ExtensionFilter(i18n("agent.pack.file"), "*.dshpack", "*.json"));
+            @Nullable Path selected = Controllers.showSaveDialog(chooser);
+            if (selected == null) return;
+            Path output = ensureExtension(selected, ".dshpack");
+            AgentPackService.ExportOptions options = new AgentPackService.ExportOptions(
+                    name.getValue(), description.getValue(), instance.coreVersionProperty().get(),
+                    profile.getValue(), template.getValue(), instance.webPortProperty().get(), model.getValue(),
+                    extensions.getValue(), Boolean.TRUE.equals(includeCore.getValue()),
+                    Boolean.TRUE.equals(includeProfile.getValue()), Boolean.TRUE.equals(includeModel.getValue()),
+                    Boolean.TRUE.equals(includeExtensions.getValue()), Boolean.TRUE.equals(includeProvider.getValue()));
+            try {
+                AgentPackService.exportInstance(AgentRepository.get(), instance, output, options);
+                Controllers.dialog(i18n("agent.pack.export.success", output), i18n("message.success"), MessageDialogPane.MessageType.SUCCESS);
+            } catch (IOException | RuntimeException e) {
+                showError(i18n("agent.pack.export.failed"), e);
+            }
+        });
     }
 
     /// Installs a portable `.dshpack` in an isolated DSH_HOME before committing its instance.
@@ -920,6 +963,71 @@ public final class AgentPages {
             current = current.getCause();
         }
         return current;
+    }
+
+    /// Watches a started DSH process and opens the support dialog for a non-zero early exit.
+    private static void watchLaunchFailure(AgentInstance instance, Process process) {
+        process.onExit().thenRun(() -> {
+            if (process.exitValue() != 0) {
+                Platform.runLater(() -> {
+                    if (AgentRepository.get().isRunning()) {
+                        showLaunchFailure(instance,
+                                new IOException("DSH exited with code " + process.exitValue()));
+                    }
+                });
+            }
+        });
+    }
+
+    /// Displays an HMCL-style actionable launch report with a sanitized copy/export path.
+    private static void showLaunchFailure(AgentInstance instance, Throwable throwable) {
+        AgentRepository repository = AgentRepository.get();
+        String report = launchFailureReport(instance, throwable, repository.getConsoleLines());
+        MessageDialogPane dialog = new MessageDialogPane(
+                StringUtils.escapeXmlAttribute(report), i18n("agent.launch.failed"),
+                MessageDialogPane.MessageType.ERROR);
+        com.jfoenix.controls.JFXButton copy = new com.jfoenix.controls.JFXButton(i18n("agent.launch.failure.copy"));
+        copy.setOnAction(event -> FXUtils.copyText(report));
+        dialog.addButton(copy);
+        com.jfoenix.controls.JFXButton export = new com.jfoenix.controls.JFXButton(i18n("agent.launch.failure.export"));
+        export.setOnAction(event -> exportLaunchFailure(report, instance));
+        dialog.addButton(export);
+        com.jfoenix.controls.JFXButton console = new com.jfoenix.controls.JFXButton(i18n("agent.launch.failure.console"));
+        console.setOnAction(event -> showConsole());
+        dialog.addButton(console);
+        dialog.addButton(new com.jfoenix.controls.JFXButton(i18n("button.ok")));
+        Controllers.dialog(dialog);
+    }
+
+    /// Builds a support report from the exception and already-redacted DSH output.
+    static String launchFailureReport(AgentInstance instance, Throwable throwable, List<String> consoleLines) {
+        StringBuilder report = new StringBuilder();
+        report.append(i18n("agent.launch.failure.warning")).append("\n\n")
+                .append("instance=").append(instance.getId()).append("\n")
+                .append("name=").append(instance.getName()).append("\n")
+                .append("coreVersion=").append(instance.coreVersionProperty().get()).append("\n")
+                .append("profile=").append(instance.profileNameProperty().get()).append("\n")
+                .append("reason=\n").append(StringUtils.getStackTrace(throwable)).append("\n")
+                .append("console=\n");
+        consoleLines.forEach(line -> report.append(line).append('\n'));
+        return report.toString();
+    }
+
+    /// Writes the same support report to a user-selected text file.
+    private static void exportLaunchFailure(String report, AgentInstance instance) {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle(i18n("agent.launch.failure.export"));
+        chooser.setInitialFileName(safeFileName(instance.getName()) + "-dsh-launch-failure.log");
+        chooser.getExtensionFilters().setAll(new FileChooser.ExtensionFilter(i18n("agent.diagnostics.file"), "*.log", "*.txt"));
+        @Nullable Path selected = Controllers.showSaveDialog(chooser);
+        if (selected == null) return;
+        Path output = ensureExtension(selected, ".log");
+        try {
+            Files.writeString(output, report, StandardCharsets.UTF_8);
+            Controllers.showToast(i18n("agent.launch.failure.exported", output));
+        } catch (IOException error) {
+            showError(i18n("agent.launch.failure.export"), error);
+        }
     }
 
     /// Displays a consistent HMCL error dialog containing the actionable exception details.

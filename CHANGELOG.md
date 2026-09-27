@@ -1,5 +1,17 @@
 # Changelog
 
+## DSH 启动失败诊断 - 2026-09-27
+
+- 启动异常和启动后非零退出现在使用统一的 HMCL 风格诊断窗口。
+- 支持复制脱敏日志、导出 UTF-8 日志文件和打开控制台，并提示不要发送截图。
+
+## DSH instance workspace and configurable Pack export - 2026-09-27
+
+- Reworked DSH Instances into an HMCL-style two-pane workspace: instances remain on the left and the selected instance's Core/Profile management appears on the right.
+- Added Pack export to the instance row menu and made export fields selectable. Core, Profile, model, extensions and optional Provider routing can be chosen per export.
+- API keys, Workspace paths, sessions and runtime files remain excluded; API keys are never exportable and Provider routing is off by default.
+- Widened the export options dialog for the multi-field workflow and made Pack writes atomic.
+
 ## Runtime safety and bounded network input - 2026-09-27
 
 - Reject persisted instance environment entries that could contain secrets or alter Node, Java, DSH, or pnpm execution.
