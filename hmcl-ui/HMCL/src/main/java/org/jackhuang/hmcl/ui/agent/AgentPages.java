@@ -970,7 +970,7 @@ public final class AgentPages {
         process.onExit().thenRun(() -> {
             if (process.exitValue() != 0) {
                 Platform.runLater(() -> {
-                    if (AgentRepository.get().isRunning()) {
+                    if (!AgentRepository.get().wasStopRequested(process)) {
                         showLaunchFailure(instance,
                                 new IOException("DSH exited with code " + process.exitValue()));
                     }

@@ -105,6 +105,8 @@ public final class AgentRepository {
     private final Path configFile = Metadata.HMCL_USER_HOME.resolve("dshcraft-agent.properties");
     private final Properties raw = new Properties();
     private volatile Process process;
+    /// Process most recently terminated by the user's explicit Stop action.
+    private volatile @Nullable Process stopRequested;
     private boolean loading;
 
     private AgentRepository() {
@@ -673,6 +675,7 @@ public final class AgentRepository {
 
         Process started = builder.start();
         process = started;
+        stopRequested = null;
         consoleLines.clear();
         webUrl.set("");
         List<String> redactions = new ArrayList<>(mcpSecrets.values());
@@ -915,6 +918,7 @@ public final class AgentRepository {
     public synchronized void stop() {
         Process stopping = process;
         if (stopping == null) return;
+        stopRequested = stopping;
         webUrl.set("");
         if (!stopping.isAlive()) {
             if (process == stopping) process = null;
@@ -938,6 +942,11 @@ public final class AgentRepository {
             running.set(false);
             addConsoleLine("[process] DSH stopped");
         }
+    }
+
+    /// Reports whether a process exit was caused by the user's Stop action.
+    public boolean wasStopRequested(Process candidate) {
+        return stopRequested == candidate;
     }
 
     /// Loads persistent Agent state, including backward-compatible defaults for fields added after v1.2.
