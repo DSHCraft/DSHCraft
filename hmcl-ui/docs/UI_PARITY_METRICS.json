@@ -1,0 +1,14 @@
+{
+  "main_upstream": 63,
+  "main_agent": 63,
+  "main_identical": true,
+  "root_upstream": 8,
+  "root_agent": 8,
+  "root_ratio": 0.625,
+  "popup_upstream": 27,
+  "popup_agent": 27,
+  "popup_ratio": 0.9629629629629629,
+  "settings_upstream": 5,
+  "settings_agent": 5,
+  "settings_ratio": 1.0
+}
