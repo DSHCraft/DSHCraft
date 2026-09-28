@@ -30,6 +30,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -344,14 +346,26 @@ public final class DshModService {
 
     /// Reads real Profile dependencies; missing Profiles have no installed external Mods.
     public static @Unmodifiable Set<String> installedPackages(Path home, String profile) throws IOException {
+        return installedPackageVersions(home, profile).keySet();
+    }
+
+    /// Reads installed npm package names and resolved versions from one isolated DSH Profile.
+    public static @Unmodifiable Map<String, String> installedPackageVersions(Path home, String profile) throws IOException {
         validateProfile(profile);
         Path packageFile = home.resolve("profiles").resolve(profile).resolve("package.json");
-        if (!Files.isRegularFile(packageFile)) return Set.of();
+        if (!Files.isRegularFile(packageFile)) return Map.of();
         try (Reader input = Files.newBufferedReader(packageFile, StandardCharsets.UTF_8)) {
             JsonElement root = JsonParser.parseReader(input);
             if (!root.isJsonObject()) throw new IOException("DSH Profile package.json must be an object");
             JsonObject dependencies = root.getAsJsonObject().getAsJsonObject("dependencies");
-            return dependencies == null ? Set.of() : Set.copyOf(dependencies.keySet());
+            if (dependencies == null) return Map.of();
+            Map<String, String> result = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonElement> entry : dependencies.entrySet()) {
+                if (entry.getValue().isJsonPrimitive() && entry.getValue().getAsJsonPrimitive().isString()) {
+                    result.put(entry.getKey(), entry.getValue().getAsString());
+                }
+            }
+            return Map.copyOf(result);
         } catch (IllegalStateException | com.google.gson.JsonParseException error) {
             throw new IOException("Invalid DSH Profile package.json", error);
         }

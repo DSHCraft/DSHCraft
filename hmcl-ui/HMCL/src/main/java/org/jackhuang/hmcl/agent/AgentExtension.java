@@ -28,6 +28,8 @@ public final class AgentExtension implements AgentEntry {
     private final StringProperty name;
     private final StringProperty type;
     private final StringProperty location;
+    /// Resolved package version in the selected instance's isolated Profile.
+    private final StringProperty installedVersion;
     private final BooleanProperty enabled;
     private final StringProperty summary = new SimpleStringProperty(this, "summary");
     private final StringProperty tag = new SimpleStringProperty(this, "tag");
@@ -37,12 +39,17 @@ public final class AgentExtension implements AgentEntry {
         this.name = new SimpleStringProperty(this, "name", Objects.requireNonNullElse(name, "Extension"));
         this.type = new SimpleStringProperty(this, "type", Objects.requireNonNullElse(type, "Plugin"));
         this.location = new SimpleStringProperty(this, "location", Objects.requireNonNullElse(location, ""));
+        this.installedVersion = new SimpleStringProperty(this, "installedVersion", "");
         this.enabled = new SimpleBooleanProperty(this, "enabled", enabled);
         summary.bind(Bindings.createStringBinding(() -> {
             if (BUILTIN_IDS.contains(this.id.get())) return i18n("agent.mod.builtin");
             String path = this.location.get();
-            return (this.enabled.get() ? "Enabled" : "Disabled") + (path == null || path.isBlank() ? "" : "  /  " + path);
-        }, this.id, this.location, this.enabled));
+            String version = this.installedVersion.get();
+            String state = version == null || version.isBlank()
+                    ? (this.enabled.get() ? "Enabled" : "Not installed")
+                    : "Installed " + version;
+            return state + (path == null || path.isBlank() ? "" : "  /  " + path);
+        }, this.id, this.location, this.enabled, this.installedVersion));
         tag.bind(this.type);
     }
 
@@ -66,6 +73,11 @@ public final class AgentExtension implements AgentEntry {
 
     public BooleanProperty enabledProperty() {
         return enabled;
+    }
+
+    /// Returns the resolved version from the selected isolated Profile.
+    public StringProperty installedVersionProperty() {
+        return installedVersion;
     }
 
     @Override

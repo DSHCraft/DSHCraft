@@ -417,14 +417,17 @@ public final class AgentRepository {
 
     /// Reconciles package-backed entries with the target instance's actual Profile dependencies.
     public void refreshInstalledMods(AgentInstance instance) throws IOException {
-        Set<String> installed = DshModService.installedPackages(getInstanceHome(instance),
+        Map<String, String> installed = DshModService.installedPackageVersions(getInstanceHome(instance),
                 instance.profileNameProperty().get());
         Set<String> ids = extensionIds(instance);
         for (AgentExtension extension : extensions) {
             if (!isPackageBacked(extension)) continue;
             String spec = safe(extension.locationProperty().get()).trim();
             if (spec.isEmpty()) continue;
-            if (installed.contains(DshModService.packageName(spec))) ids.add(extension.getId());
+            String packageName = DshModService.packageName(spec);
+            String installedVersion = installed.get(packageName);
+            extension.installedVersionProperty().set(installedVersion == null ? "" : installedVersion);
+            if (installedVersion != null) ids.add(extension.getId());
             else ids.remove(extension.getId());
         }
         instance.extensionIdsProperty().set(String.join(",", ids));

@@ -46,6 +46,16 @@ public class DshModServiceTest {
         assertEquals("is-number", DshModService.packageName("is-number@7.0.0"));
     }
 
+    /// Missing Profiles report no versions, keeping the Mod list usable before first launch.
+    @Test
+    public void readsInstalledPackageVersions() throws Exception {
+        Path home = temporary.resolve("version-home");
+        Path packageFile = home.resolve("profiles/web/package.json");
+        Files.createDirectories(packageFile.getParent());
+        Files.writeString(packageFile, "{\"dependencies\":{\"is-number\":\"7.0.0\"}}");
+        assertEquals("7.0.0", DshModService.installedPackageVersions(home, "web").get("is-number"));
+    }
+
     /// Hostile Profile names and credential-bearing specs are rejected before execution.
     @Test
     public void rejectsUnsafeInputs() {
