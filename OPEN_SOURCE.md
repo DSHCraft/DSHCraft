@@ -19,6 +19,7 @@ Before publishing a release, complete these checks:
 - resolve the remaining unverified items in `BINARY_LICENSE_AUDIT.md` and verify the newly embedded ANTLR runtime notice in final binaries;
 - check `THIRD_PARTY_NOTICES.md` and include every required dependency notice text with any binary release;
 - use a production updater signing key stored outside the repository;
+- keep the launcher RSA and updater Ed25519 private keys outside the repository; public trust roots are embedded in the source tree and can be rotated only with an explicit release migration;
 - finish the fork-specific verified installation/rollback path and UI flow; signed feed fetch and artifact verification alone do not install updates;
 - inspect the archive for keys, credential values, temporary paths and generated user data.
 
