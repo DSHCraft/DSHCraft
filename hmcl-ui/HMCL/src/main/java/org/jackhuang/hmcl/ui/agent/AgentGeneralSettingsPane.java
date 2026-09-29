@@ -129,7 +129,8 @@ public final class AgentGeneralSettingsPane extends ScrollPane {
                     : current.equals("https://mirrors.cloud.tencent.com/npm") ? 3
                     : current.equals(AgentNetworkService.OFFICIAL_REGISTRY) ? 0 : 4;
             PromptDialogPane.Builder.CandidatesQuestion choice =
-                    new PromptDialogPane.Builder.CandidatesQuestion(i18n("agent.download.source.choose"), labels);
+                    new PromptDialogPane.Builder.CandidatesQuestion(i18n("agent.download.source.choose"), labels)
+                            .setSelectedIndex(selected);
             Controllers.prompt(new PromptDialogPane.Builder(i18n("agent.download.source.title"),
                     (questions, callback) -> callback.resolve()).addQuestion(choice))
                     .thenAccept(questions -> {

@@ -1,5 +1,12 @@
 # Changelog
 
+## DSH Plugin Market - 2026-09-29
+
+- Embedded the HMCL-native npm Plugin Market directly in Downloads > Plugins, with remote search, paging, retry, package version selection, and built-in or custom npm sources.
+- Installing a selected version runs DSH's native `plugin --profile ... add` against the captured instance's isolated `DSH_HOME`. The local Plugin catalog updates only after installation succeeds.
+- Market results exclude DSH Core and internal `@deepseek-ai` packages. Version selection requires upstream `dsh.bundle.patch` metadata for third-party packages, so catalog-only npm packages cannot be installed as Plugins. Known optional official Bundles offer the instance Core version first when published.
+- Instance version management now accepts a custom npm package spec or a dropped local `.tgz` / `.tar.gz` archive. DSH installs it through its native plugin command; installed local archives display their resolved package version when available.
+
 ## DSH 启动失败诊断 - 2026-09-27
 
 - 启动异常和启动后非零退出现在使用统一的 HMCL 风格诊断窗口。

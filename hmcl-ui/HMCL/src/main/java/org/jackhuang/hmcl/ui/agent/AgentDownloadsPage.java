@@ -39,8 +39,8 @@ public final class AgentDownloadsPage extends DecoratorAnimatedPage implements D
     private final TabHeader.Tab<AgentCoreDownloadPage> coreTab = new TabHeader.Tab<>("dshCoreDownloads");
     /// Portable Pack import/export tab.
     private final TabHeader.Tab<AgentEditorPage> packTab = new TabHeader.Tab<>("dshPackDownloads");
-    /// Package-backed Plugin and Bundle tab.
-    private final TabHeader.Tab<AgentListPage<AgentExtension>> pluginTab = new TabHeader.Tab<>("dshPluginDownloads");
+    /// Package-backed Plugin and Bundle download tab.
+    private final TabHeader.Tab<AgentPluginMarketPage> pluginTab = new TabHeader.Tab<>("dshPluginDownloads");
     /// MCP metadata and configuration tab.
     private final TabHeader.Tab<AgentListPage<AgentExtension>> mcpTab = new TabHeader.Tab<>("dshMcpDownloads");
     /// Skill metadata and configuration tab.
@@ -54,7 +54,7 @@ public final class AgentDownloadsPage extends DecoratorAnimatedPage implements D
     public AgentDownloadsPage() {
         coreTab.setNodeSupplier(AgentCoreDownloadPage::new);
         packTab.setNodeSupplier(this::packContent);
-        pluginTab.setNodeSupplier(() -> extensionContent("Plugin", i18n("agent.downloads.plugins")));
+        pluginTab.setNodeSupplier(AgentPluginMarketPage::new);
         mcpTab.setNodeSupplier(() -> extensionContent("MCP", i18n("agent.downloads.mcp")));
         skillTab.setNodeSupplier(() -> extensionContent("Skill", i18n("agent.downloads.skills")));
         toolTab.setNodeSupplier(() -> extensionContent("Tool", i18n("agent.downloads.tools")));
@@ -110,16 +110,12 @@ public final class AgentDownloadsPage extends DecoratorAnimatedPage implements D
             }
         }
         FilteredList<AgentExtension> items = new FilteredList<>(repository.getExtensions(), extension ->
-                "Plugin".equals(category)
-                        ? "Plugin".equalsIgnoreCase(extension.typeProperty().get())
-                                || "Bundle".equalsIgnoreCase(extension.typeProperty().get())
-                        : category.equalsIgnoreCase(extension.typeProperty().get()));
-        boolean packageBacked = "Plugin".equals(category);
+                category.equalsIgnoreCase(extension.typeProperty().get()));
         return new AgentListPage<>(title, items,
                 () -> repository.addExtension(category), repository::load, AgentPages::openExtension,
-                packageBacked ? AgentPages::toggleMod : AgentPages::openExtension,
+                AgentPages::openExtension,
                 AgentPages::removeModEntry,
-                packageBacked ? AgentPages::toggleMod : null,
+                null,
                 extension -> Set.of("filesystem", "browser", "skills", "mcp-client").contains(extension.getId())
                         || repository.getSelectedInstance() != null
                         && repository.hasExtension(repository.getSelectedInstance(), extension),

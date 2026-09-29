@@ -92,6 +92,11 @@ public abstract class SearchableListPage<T> extends ListPageBase<T> {
     /// Creates the row cell used by this list.
     protected abstract ListCell<T> createListCell();
 
+    /// Message shown when this list has no rows and local search is inactive.
+    protected String emptyListMessage() {
+        return "";
+    }
+
     /// Creates the shared HMCL GameList-style skin.
     @Override
     protected final Skin<?> createDefaultSkin() {
@@ -99,7 +104,12 @@ public abstract class SearchableListPage<T> extends ListPageBase<T> {
     }
 
     /// One HMCL toolbar action specification.
-    public record ToolbarAction(@Nullable String text, SVG icon, Runnable action) {
+    public record ToolbarAction(@Nullable String text, SVG icon, Runnable action,
+                                @Nullable String tooltip) {
+        /// Uses the visible label as the hover description by default.
+        public ToolbarAction(@Nullable String text, SVG icon, Runnable action) {
+            this(text, icon, action, text);
+        }
     }
 
     /// Shared physical skin extracted from `GameListPage.GameListSkin` with only data callbacks parameterized.
@@ -159,7 +169,9 @@ public abstract class SearchableListPage<T> extends ListPageBase<T> {
             searchBar.getChildren().setAll(searchField, closeSearchBar);
 
             for (ToolbarAction action : skinnable.toolbarActions()) {
-                toolbarNormal.getChildren().add(createToolbarButton2(action.text(), action.icon(), action.action()));
+                JFXButton button = createToolbarButton2(action.text(), action.icon(), action.action());
+                if (action.tooltip() != null) FXUtils.installFastTooltip(button, action.tooltip());
+                toolbarNormal.getChildren().add(button);
             }
             toolbarNormal.getChildren().add(createToolbarButton2(i18n("search"), SVG.SEARCH, () -> changeToolbar(searchBar)));
 
@@ -181,7 +193,7 @@ public abstract class SearchableListPage<T> extends ListPageBase<T> {
             Label placeholderLabel = new Label();
             placeholderLabel.textProperty().bind(Bindings.when(searching)
                     .then(i18n("search.no_results_found"))
-                    .otherwise(""));
+                    .otherwise(skinnable.emptyListMessage()));
             placeholderContainer.getChildren().add(placeholderLabel);
             listView.setPlaceholder(placeholderContainer);
 

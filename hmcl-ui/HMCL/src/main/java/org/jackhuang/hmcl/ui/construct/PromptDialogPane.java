@@ -95,7 +95,8 @@ public class PromptDialogPane extends DialogPane {
                 comboBox.getItems().setAll(((Builder.CandidatesQuestion) question).candidates);
                 comboBox.getSelectionModel().selectedIndexProperty().addListener((a, b, newValue) ->
                         ((Builder.CandidatesQuestion) question).value = newValue.intValue());
-                comboBox.getSelectionModel().select(0);
+                comboBox.getSelectionModel().select(((Builder.CandidatesQuestion) question).value == null
+                        ? 0 : ((Builder.CandidatesQuestion) question).value);
                 if (StringUtils.isNotBlank(question.question.get())) {
                     body.addRow(rowIndex++, createQuestionLabel(question.question.get()), comboBox);
                 } else {
@@ -224,6 +225,13 @@ public class PromptDialogPane extends DialogPane {
                     throw new IllegalArgumentException("At least one candidate required");
                 }
                 this.candidates = new ArrayList<>(Arrays.asList(candidates));
+            }
+
+            /// Selects the saved choice when opening a candidate dialog.
+            public CandidatesQuestion setSelectedIndex(int index) {
+                if (index < 0 || index >= candidates.size()) throw new IllegalArgumentException("Invalid choice index");
+                value = index;
+                return this;
             }
         }
 

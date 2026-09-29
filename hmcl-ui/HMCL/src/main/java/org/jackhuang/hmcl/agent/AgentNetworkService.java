@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.net.ssl.SSLContext;
@@ -48,6 +49,14 @@ public final class AgentNetworkService {
     private static final int MAX_NPM_RESPONSE_BYTES = 8 * 1024 * 1024;
     /// Extension catalogs are intentionally smaller than npm package metadata.
     private static final int MAX_EXTENSION_RESPONSE_BYTES = 4 * 1024 * 1024;
+    /// Optional official packages documented for plugin installation, excluding DSH's internal packages.
+    private static final Set<String> OFFICIAL_OPTIONAL_PLUGINS = Set.of(
+            "@deepseek-ai/dsh-subagent-codex", "@deepseek-ai/dsh-subagent-claude-code",
+            "@deepseek-ai/dsh-experimental-agent-team-web-profile",
+            "@deepseek-ai/dsh-experimental-agent-team-profile",
+            "@deepseek-ai/dsh-experimental-voice-input-bundle",
+            "@deepseek-ai/dsh-experimental-auto-review",
+            "@deepseek-ai/dsh-experimental-schedule-bundle");
 
     /// Prevents construction of this utility class.
     private AgentNetworkService() {
@@ -260,6 +269,121 @@ public final class AgentNetworkService {
         return List.copyOf(result);
     }
 
+    /// Searches npm for DSH Plugin/Bundle packages and returns version-pinned install specs.
+    public static NpmSearchResult searchNpmPlugins(String query, String registry, int offset)
+            throws IOException, InterruptedException {
+        String text = query == null ? "" : query.trim();
+        if (text.isBlank() || text.length() > 120) throw new IOException("Plugin search text is invalid");
+        if (offset < 0 || offset > 1000) throw new IOException("Plugin search offset is invalid");
+        String base = validateRegistryUrlForCommand(registry);
+        URI uri = URI.create(base + "/-/v1/search?text="
+                + URLEncoder.encode(text, StandardCharsets.UTF_8) + "&size=40&from=" + offset);
+        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/json")
+                .header("User-Agent", "DShCraft-Agent-Launcher")
+                .GET().build();
+        HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        String body;
+        try (InputStream input = response.body()) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IOException("npm plugin search returned HTTP " + response.statusCode());
+            }
+            body = readBounded(input, MAX_EXTENSION_RESPONSE_BYTES, "npm plugin search response");
+        }
+        return parseNpmSearch(body, offset);
+    }
+
+    /// Parses a bounded npm search response for validation and fixture tests.
+    static NpmSearchResult parseNpmSearch(String body, int offset) throws IOException {
+        JsonObject root;
+        try {
+            root = JsonParser.parseString(body).getAsJsonObject();
+        } catch (RuntimeException error) {
+            throw new IOException("npm plugin search returned malformed JSON", error);
+        }
+        try {
+            JsonElement objectsElement = root.get("objects");
+            if (!(objectsElement instanceof JsonArray objects)) return new NpmSearchResult(List.of(), 0);
+            int total = root.has("total") && root.get("total").isJsonPrimitive()
+                    ? root.get("total").getAsInt() : offset + objects.size();
+            List<NpmPlugin> result = new ArrayList<>();
+            Set<String> names = new LinkedHashSet<>();
+            for (JsonElement element : objects) {
+                if (!element.isJsonObject()) continue;
+                JsonElement packageElement = element.getAsJsonObject().get("package");
+                if (!(packageElement instanceof JsonObject packageObject)) continue;
+                String name = string(packageObject, "name").trim();
+                String version = string(packageObject, "version").trim();
+                if (!validNpmName(name) || !version.matches("[0-9A-Za-z.+-]{1,100}")
+                        || !names.add(name) || DSH_PACKAGE.equals(name)) continue;
+                JsonElement keywordsElement = packageObject.get("keywords");
+                boolean official = OFFICIAL_OPTIONAL_PLUGINS.contains(name);
+                if (name.startsWith("@deepseek-ai/") && !official) continue;
+                boolean dshKeyword = false;
+                if (keywordsElement instanceof JsonArray keywords) {
+                    for (JsonElement keyword : keywords) {
+                        String value = keyword.isJsonPrimitive() ? keyword.getAsString().toLowerCase(Locale.ROOT) : "";
+                        if (Set.of("dsh", "dsh-plugin", "deepseek-harness", "deepseek-harness-plugin").contains(value)) {
+                            dshKeyword = true;
+                        }
+                    }
+                }
+                if (!official && !dshKeyword) continue;
+                result.add(new NpmPlugin(name, version, string(packageObject, "description"), name + "@" + version));
+            }
+            return new NpmSearchResult(List.copyOf(result), Math.max(total, 0));
+        } catch (RuntimeException error) {
+            throw new IOException("npm plugin search returned malformed package data", error);
+        }
+    }
+
+    /// Reads published versions for one npm package without installing or caching it.
+    public static List<String> fetchPluginVersions(String name, String registry)
+            throws IOException, InterruptedException {
+        if (!validNpmName(name)) throw new IOException("Invalid npm plugin name");
+        String packagePath = URLEncoder.encode(name, StandardCharsets.UTF_8).replace("%40", "@");
+        URI uri = URI.create(validateRegistryUrlForCommand(registry) + "/" + packagePath);
+        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/json")
+                .header("User-Agent", "DShCraft-Agent-Launcher").GET().build();
+        HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        String body;
+        try (InputStream input = response.body()) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300)
+                throw new IOException("npm package metadata returned HTTP " + response.statusCode());
+            body = readBounded(input, MAX_NPM_RESPONSE_BYTES, "npm package metadata");
+        }
+        return parsePluginVersions(body, name);
+    }
+
+    /// Selects published versions that declare a DSH Bundle patch; legacy official Bundles remain eligible.
+    static List<String> parsePluginVersions(String body, String name) throws IOException {
+        try {
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            JsonObject versions = object(root, "versions");
+            List<String> result = new ArrayList<>();
+            for (Map.Entry<String, JsonElement> entry : versions.entrySet()) {
+                String version = entry.getKey();
+                if (!version.matches("[0-9A-Za-z.+-]{1,100}") || !entry.getValue().isJsonObject()) continue;
+                JsonObject metadata = entry.getValue().getAsJsonObject();
+                JsonObject dsh = object(metadata, "dsh");
+                JsonObject bundle = object(dsh, "bundle");
+                if (OFFICIAL_OPTIONAL_PLUGINS.contains(name) || !string(bundle, "patch").isBlank())
+                    result.add(version);
+            }
+            java.util.Collections.reverse(result);
+            return List.copyOf(result);
+        } catch (RuntimeException error) {
+            throw new IOException("npm package metadata returned malformed JSON", error);
+        }
+    }
+
+    /// Accepts ordinary scoped and unscoped npm package names for registry URLs and DSH plugin commands.
+    private static boolean validNpmName(String name) {
+        return name != null && name.length() <= 214
+                && name.matches("(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*");
+    }
+
     /// Reads UTF-8 response data with a byte limit before allocating a JSON string.
     private static String readBounded(InputStream input, int maximum, String label) throws IOException {
         byte[] contents = input.readNBytes(maximum + 1);
@@ -348,6 +472,14 @@ public final class AgentNetworkService {
 
     /// One importable browser-style extension catalog entry.
     public record ExtensionCatalogEntry(String id, String name, String kind, String packageSpec, boolean enabled) {
+    }
+
+    /// One npm package result shown by the DSH Plugin market.
+    public record NpmPlugin(String name, String version, String description, String packageSpec) {
+    }
+
+    /// One remote search page and the total number of raw npm results.
+    public record NpmSearchResult(List<NpmPlugin> plugins, int total) {
     }
 
     /// Immutable npm catalog summary suitable for the HMCL dialog layer.

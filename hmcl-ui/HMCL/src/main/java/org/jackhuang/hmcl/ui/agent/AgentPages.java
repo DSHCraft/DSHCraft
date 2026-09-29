@@ -275,10 +275,11 @@ public final class AgentPages {
                 .addText(i18n("agent.field.extension_ids"), i18n("agent.field.extension_ids.subtitle"), instance.extensionIdsProperty(), true)
                 .addAction(i18n("agent.extensions"), i18n("agent.mod.instance.subtitle"), SVG.EXTENSION,
                         () -> {
-                            AgentDownloadsPage downloadPage = downloads();
-                            downloadPage.showPlugins();
-                            Controllers.navigate(downloadPage);
+                            repository.setSelectedInstance(instance);
+                            Controllers.navigate(extensions());
                         })
+                .addAction(i18n("agent.plugin.custom.add"), i18n("agent.plugin.custom.subtitle"), SVG.ADD_CIRCLE,
+                        () -> requestCustomPlugin(instance))
                 .addText(i18n("agent.field.arguments"), i18n("agent.field.arguments.subtitle"), instance.argumentsProperty(), true)
                 .addText(i18n("agent.field.cwd"), i18n("agent.field.cwd.subtitle"), instance.workingDirectoryProperty(), true)
                 .addAction(i18n("agent.pack.export"), i18n("agent.pack.export.subtitle"), SVG.OUTPUT,
@@ -291,7 +292,33 @@ public final class AgentPages {
                         AgentPages::showConsole)
                 .addAction(i18n("agent.launch"), i18n("agent.launch.subtitle"), SVG.ROCKET_LAUNCH,
                         () -> launch(instance));
+        FXUtils.applyDragListener(page, path -> Files.isRegularFile(path)
+                        && isNpmTarball(path), paths -> installCustomPlugin(instance, paths.get(0).toString()));
         display.accept(page);
+    }
+
+    /// Identifies npm package archives accepted by the instance version manager.
+    private static boolean isNpmTarball(Path path) {
+        String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith(".tgz") || name.endsWith(".tar.gz");
+    }
+
+    /// Requests a custom npm plugin spec in the selected instance's version manager.
+    private static void requestCustomPlugin(AgentInstance instance) {
+        Controllers.prompt(i18n("agent.plugin.custom.add"), (spec, handler) -> {
+            String value = spec == null ? "" : spec.trim();
+            if (!value.matches("(?:@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*(?:@[0-9A-Za-z.+-]+)?")) {
+                handler.reject(i18n("agent.plugin.custom.invalid"));
+                return;
+            }
+            handler.resolve();
+        }, "").thenAccept(spec -> installCustomPlugin(instance, spec.trim()));
+    }
+
+    /// Sends a custom package name or dropped local npm archive through DSH's native plugin operation.
+    private static void installCustomPlugin(AgentInstance instance, String spec) {
+        AgentExtension entry = new AgentExtension("pending-plugin", spec, "Plugin", spec, false);
+        runModOperation(entry, instance, DshModService.Action.INSTALL, true);
     }
 
     /// Removes an instance from the embedded workspace after the same confirmation used by the standalone list.
@@ -495,6 +522,26 @@ public final class AgentPages {
                     i18n("message.error"), MessageDialogPane.MessageType.WARNING);
             return;
         }
+        runModOperation(extension, instance, action, false);
+    }
+
+    /// Installs a market result into the instance selected when the action began.
+    public static void installMarketPlugin(AgentInstance instance, AgentNetworkService.NpmPlugin plugin,
+                                           String version) {
+        AgentExtension entry = new AgentExtension("pending-plugin", plugin.name(), "Plugin",
+                plugin.name() + "@" + version, false);
+        runModOperation(entry, instance, DshModService.Action.INSTALL, true);
+    }
+
+    /// Runs one native plugin operation against a captured instance and records successful market installs.
+    private static void runModOperation(AgentExtension extension, AgentInstance instance,
+                                        DshModService.Action action, boolean marketInstall) {
+        AgentRepository repository = AgentRepository.get();
+        if (!repository.getInstances().contains(instance)) {
+            Controllers.dialog(i18n("agent.mod.instance.required"), i18n("message.error"),
+                    MessageDialogPane.MessageType.WARNING);
+            return;
+        }
         List<String> problems = repository.validateInstanceConfiguration(instance);
         if (!problems.isEmpty()) {
             Controllers.dialog(String.join("\n", problems),
@@ -504,6 +551,7 @@ public final class AgentPages {
         String version = instance.coreVersionProperty().get();
         String profile = instance.profileNameProperty().get();
         String spec = extension.locationProperty().get();
+        String registry = repository.getPackageRegistry();
         Path home = repository.getInstanceHome(instance);
         String busyKey = home + ":" + profile;
         if (!BUSY_PROFILES.add(busyKey)) {
@@ -514,7 +562,7 @@ public final class AgentPages {
         CompletableFuture.supplyAsync(() -> {
             try {
                 return DshModService.run(DshModService.runtimeRoot(), home, version, profile, spec, action,
-                        repository.getPackageRegistry());
+                        registry);
             } catch (IOException | InterruptedException error) {
                 if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 throw new CompletionException(error);
@@ -527,6 +575,20 @@ public final class AgentPages {
             }
             try {
                 if (!version.equals(result.coreVersion())) instance.coreVersionProperty().set(result.coreVersion());
+                if (marketInstall) {
+                    String installedName = result.installedPackageName() == null
+                            ? DshModService.packageName(spec) : result.installedPackageName();
+                    String installedSpec = result.installedPackageName() == null ? spec : installedName;
+                    AgentExtension existing = repository.getExtensions().stream()
+                            .filter(item -> installedName.equals(DshModService.packageName(item.locationProperty().get())))
+                            .findFirst().orElse(null);
+                    if (existing == null) {
+                        String id = "npm-" + java.util.UUID.nameUUIDFromBytes(
+                                installedName.getBytes(StandardCharsets.UTF_8));
+                        repository.addImportedExtension(new AgentExtension(id, installedName, "Plugin",
+                                installedSpec, false));
+                    } else existing.locationProperty().set(installedSpec);
+                }
                 repository.refreshInstalledMods(instance);
                 Controllers.showToast(i18n("agent.mod.success", extension.getName()));
             } catch (IOException ioError) {

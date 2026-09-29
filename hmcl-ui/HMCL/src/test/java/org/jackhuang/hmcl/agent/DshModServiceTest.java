@@ -11,9 +11,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -46,6 +49,44 @@ public class DshModServiceTest {
         assertEquals("is-number", DshModService.packageName("is-number@7.0.0"));
     }
 
+    /// Reads the real package identity from a dropped npm archive before installation.
+    @Test
+    public void readsLocalNpmTarballName() throws Exception {
+        Path archive = temporary.resolve("plugin.tgz");
+        byte[] manifest = "{\"name\":\"@vendor/dsh-plugin\",\"version\":\"1.0.0\"}"
+                .getBytes(StandardCharsets.UTF_8);
+        byte[] header = new byte[512];
+        byte[] name = "package/package.json".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(name, 0, header, 0, name.length);
+        byte[] size = String.format("%011o", manifest.length).getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(size, 0, header, 124, size.length);
+        try (OutputStream output = new GZIPOutputStream(Files.newOutputStream(archive))) {
+            output.write(header);
+            output.write(manifest);
+            output.write(new byte[(512 - manifest.length % 512) % 512]);
+            output.write(new byte[1024]);
+        }
+        assertEquals("@vendor/dsh-plugin", DshModService.packageNameFromTarball(archive));
+        assertThrows(IOException.class, () -> DshModService.packageNameFromTarball(
+                temporary.resolve("missing.tgz")));
+    }
+
+    /// Optional real DSH plugin install from a dropped archive in a disposable Profile.
+    @Test
+    public void installsRealDroppedPluginArchive() throws Exception {
+        String archive = System.getenv("DSHCRAFT_E2E_PLUGIN_TARBALL");
+        String runtimes = System.getenv("DSHCRAFT_E2E_RUNTIME_ROOT");
+        String coreVersion = System.getenv("DSHCRAFT_E2E_CORE_VERSION");
+        assumeTrue(archive != null && runtimes != null && coreVersion != null,
+                "Set DSHCRAFT_E2E_PLUGIN_TARBALL, DSHCRAFT_E2E_RUNTIME_ROOT and DSHCRAFT_E2E_CORE_VERSION");
+        Path home = temporary.resolve("dropped-plugin-instance/dsh-home");
+        String packageName = DshModService.packageNameFromTarball(Path.of(archive));
+        DshModService.Result result = DshModService.run(Path.of(runtimes), home, coreVersion,
+                "web", archive, DshModService.Action.INSTALL);
+        assertEquals(packageName, result.installedPackageName());
+        assertTrue(DshModService.installedPackages(home, "web").contains(packageName));
+    }
+
     /// Missing Profiles report no versions, keeping the Mod list usable before first launch.
     @Test
     public void readsInstalledPackageVersions() throws Exception {
@@ -54,6 +95,11 @@ public class DshModServiceTest {
         Files.createDirectories(packageFile.getParent());
         Files.writeString(packageFile, "{\"dependencies\":{\"is-number\":\"7.0.0\"}}");
         assertEquals("7.0.0", DshModService.installedPackageVersions(home, "web").get("is-number"));
+        Path installedManifest = home.resolve("profiles/web/node_modules/@vendor/dsh-plugin/package.json");
+        Files.createDirectories(installedManifest.getParent());
+        Files.writeString(installedManifest, "{\"name\":\"@vendor/dsh-plugin\",\"version\":\"1.2.3\"}");
+        Files.writeString(packageFile, "{\"dependencies\":{\"@vendor/dsh-plugin\":\"file:C:/tmp/plugin.tgz\"}}");
+        assertEquals("1.2.3", DshModService.installedPackageVersions(home, "web").get("@vendor/dsh-plugin"));
     }
 
     /// Hostile Profile names and credential-bearing specs are rejected before execution.

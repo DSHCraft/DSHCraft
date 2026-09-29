@@ -1,5 +1,16 @@
 # DSHCraft - Manual Smoke Tests
 
+## 2026-09-29 DSH Plugin Market
+
+- Executed in the final isolated Windows HMCL preview: Downloads > Plugins directly displayed live npm rows; the Source chooser showed npm, npmmirror, Huawei, Tencent and a custom URL; a published-version dialog opened and was cancelled. Instance version management displayed the custom package row and `.tgz` drop hint. No package was installed by this window check.
+- Automated: market parser and version-contract tests passed; the full `:HMCL:test` suite passed (279 tests, 0 failures, 10 optional skips), and the signed executable build passed. A separate earlier disposable Profile test installed a real dropped `.tgz` through DSH's native plugin command.
+- [ ] Exercise query, refresh, previous/next and installed-plugin controls in Downloads > Plugins.
+- [ ] Drop a local `.tgz` or `.tar.gz` onto instance version management and confirm the package and resolved version appear only in that instance.
+- [ ] Search for a third-party DSH plugin, open its versions, select a published version, and install into a selected DSH instance. Confirm only that instance's Profile package.json and isolated DSH_HOME change.
+- [ ] For an optional official Bundle, confirm the instance Core version is first when npm publishes it. Confirm cancelling the version dialog changes nothing.
+- [ ] Force a registry error and retry. Verify the error is visible and search results are not silently added to the local Plugin catalog.
+- [ ] Install a package then open Installed Plugins, verify its version and remove/update actions. Switch instances and verify installed state follows the selected instance.
+
 ## 2026-09-27 DSH 启动失败诊断
 
 - [ ] 配置一个会失败的 Core/Profile，确认启动失败弹窗显示原因、实例信息和脱敏控制台日志。

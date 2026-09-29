@@ -426,7 +426,8 @@ public final class AgentRepository {
             if (spec.isEmpty()) continue;
             String packageName = DshModService.packageName(spec);
             String installedVersion = installed.get(packageName);
-            extension.installedVersionProperty().set(installedVersion == null ? "" : installedVersion);
+            if (instance == getSelectedInstance())
+                extension.installedVersionProperty().set(installedVersion == null ? "" : installedVersion);
             if (installedVersion != null) ids.add(extension.getId());
             else ids.remove(extension.getId());
         }

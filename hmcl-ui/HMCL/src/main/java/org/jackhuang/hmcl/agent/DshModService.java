@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.zip.GZIPInputStream;
 
 /// Runs DSH's own plugin command against one isolated instance Profile.
 @NotNullByDefault
@@ -53,7 +54,8 @@ public final class DshModService {
 
     /// Result returned only after the DSH command exits successfully.
     @NotNullByDefault
-    public record Result(String output, boolean restartRequired, String coreVersion) {
+    public record Result(String output, boolean restartRequired, String coreVersion,
+                         @Nullable String installedPackageName) {
     }
 
     /// Prevents construction of a stateless service.
@@ -175,6 +177,8 @@ public final class DshModService {
     public static Result run(Path runtimes, Path home, String version, String profile,
                              @Nullable String spec, Action action, String registry) throws IOException, InterruptedException {
         validateProfile(profile);
+        @Nullable String localPackageName = action == Action.INSTALL && spec != null && isLocalTarball(spec)
+                ? packageNameFromTarball(Path.of(spec)) : null;
         String normalizedRegistry = AgentNetworkService.validateRegistryUrlForCommand(registry);
         Path runtime = ensureCore(runtimes, version, normalizedRegistry);
         String concreteVersion = runtime.getFileName().toString();
@@ -221,12 +225,74 @@ public final class DshModService {
         builder.environment().put("PNPM_CONFIG_REGISTRY", normalizedRegistry);
         String output = runCommand(builder, COMMAND_TIMEOUT, "dsh plugin");
         if (spec != null && !spec.isBlank()) {
-            boolean installed = installedPackages(home, profile).contains(packageName(spec.trim()));
+            boolean installed = installedPackages(home, profile).contains(
+                    localPackageName == null ? packageName(spec.trim()) : localPackageName);
             if (installed == (action == Action.REMOVE)) {
                 throw new IOException("dsh plugin finished but Profile package.json did not reflect the Mod change");
             }
         }
-        return new Result(output, true, concreteVersion);
+        return new Result(output, true, concreteVersion, localPackageName);
+    }
+
+    /// Recognizes an absolute npm package archive passed through the native plugin CLI.
+    private static boolean isLocalTarball(String spec) {
+        try {
+            Path path = Path.of(spec);
+            String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+            return path.isAbsolute() && (name.endsWith(".tgz") || name.endsWith(".tar.gz"));
+        } catch (RuntimeException error) {
+            return false;
+        }
+    }
+
+    /// Reads the npm package identity from a local archive before using it as a DSH plugin spec.
+    public static String packageNameFromTarball(Path archive) throws IOException {
+        if (!Files.isRegularFile(archive, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                || Files.size(archive) > 128L * 1024 * 1024)
+            throw new IOException("Local npm package must be a regular archive under 128 MiB");
+        try (InputStream input = new GZIPInputStream(Files.newInputStream(archive))) {
+            long scanned = 0;
+            for (int entry = 0; entry < 4096; entry++) {
+                byte[] header = input.readNBytes(512);
+                if (header.length != 512) break;
+                String path = tarText(header, 0, 100);
+                if (path.isEmpty()) break;
+                long size;
+                try {
+                    size = Long.parseLong(tarText(header, 124, 12).trim(), 8);
+                } catch (NumberFormatException error) {
+                    throw new IOException("Invalid npm archive entry size", error);
+                }
+                if (size < 0 || size > 256L * 1024 * 1024) throw new IOException("npm archive entry is too large");
+                long padded = (size + 511) / 512 * 512;
+                scanned += 512 + padded;
+                if (scanned > 256L * 1024 * 1024) throw new IOException("npm archive is too large");
+                if ("package/package.json".equals(path)) {
+                    if (size > 1024 * 1024) throw new IOException("npm package.json is too large");
+                    byte[] manifest = input.readNBytes((int) size);
+                    if (manifest.length != size) throw new IOException("Truncated npm package.json");
+                    try {
+                        JsonObject json = JsonParser.parseString(new String(manifest, StandardCharsets.UTF_8)).getAsJsonObject();
+                        String name = json.get("name").getAsString();
+                        if (name.matches("(?:@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*")) return name;
+                    } catch (RuntimeException error) {
+                        throw new IOException("Invalid npm package.json", error);
+                    }
+                    throw new IOException("Invalid npm package name in archive");
+                }
+                input.skipNBytes(padded);
+            }
+        } catch (java.util.zip.ZipException error) {
+            throw new IOException("Invalid npm package archive", error);
+        }
+        throw new IOException("npm archive has no package/package.json");
+    }
+
+    /// Decodes a fixed-width TAR header field without interpreting archive file contents.
+    private static String tarText(byte[] header, int offset, int length) {
+        int end = offset;
+        while (end < offset + length && header[end] != 0) end++;
+        return new String(header, offset, end - offset, StandardCharsets.US_ASCII);
     }
 
     /// Installs a concrete npm DSH Core into the launcher-managed runtime cache.
@@ -362,7 +428,25 @@ public final class DshModService {
             Map<String, String> result = new LinkedHashMap<>();
             for (Map.Entry<String, JsonElement> entry : dependencies.entrySet()) {
                 if (entry.getValue().isJsonPrimitive() && entry.getValue().getAsJsonPrimitive().isString()) {
-                    result.put(entry.getKey(), entry.getValue().getAsString());
+                    String declared = entry.getValue().getAsString();
+                    String installed = declared;
+                    if (declared.startsWith("file:")
+                            && entry.getKey().matches("(?:@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*")) {
+                        Path manifest = packageFile.getParent().resolve("node_modules")
+                                .resolve(entry.getKey()).resolve("package.json");
+                        if (Files.isRegularFile(manifest)) {
+                            try (Reader packageInput = Files.newBufferedReader(manifest, StandardCharsets.UTF_8)) {
+                                JsonObject packageJson = JsonParser.parseReader(packageInput).getAsJsonObject();
+                                JsonElement version = packageJson.get("version");
+                                if (version != null && version.isJsonPrimitive()
+                                        && version.getAsJsonPrimitive().isString())
+                                    installed = version.getAsString();
+                            } catch (IOException | RuntimeException ignored) {
+                                // Keep the Profile declaration if the installed manifest is unavailable.
+                            }
+                        }
+                    }
+                    result.put(entry.getKey(), installed);
                 }
             }
             return Map.copyOf(result);
@@ -379,7 +463,7 @@ public final class DshModService {
     }
 
     /// Removes a package by name rather than by its install-version suffix.
-    static String packageName(String spec) {
+    public static String packageName(String spec) {
         if (spec.startsWith("@")) {
             int slash = spec.indexOf('/');
             if (slash > 0) {
