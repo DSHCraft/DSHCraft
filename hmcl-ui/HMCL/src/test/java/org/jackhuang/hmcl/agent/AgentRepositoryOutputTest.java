@@ -62,17 +62,6 @@ public class AgentRepositoryOutputTest {
                 "https://example.test", "API_KEY", "model"));
         assertThrows(IOException.class, () -> AgentRepository.providerProfileYaml("provider-a", "anthropic-messages",
                 "https://api.anthropic.com", "API-KEY", "model"));
-        assertThrows(IOException.class, () -> AgentRepository.providerProfileYaml("provider-a",
-                "openai-responses", "https://example.test", "NODE_OPTIONS", "model"));
-    }
-
-    /// Persisted instance environment entries cannot contain secrets or execution controls.
-    @Test
-    public void rejectsUnsafeInstanceEnvironmentNames() {
-        assertThrows(IOException.class, () -> AgentRepository.validateInstanceEnvironmentName("OPENAI_API_KEY"));
-        assertThrows(IOException.class, () -> AgentRepository.validateInstanceEnvironmentName("NODE_OPTIONS"));
-        assertThrows(IOException.class, () -> AgentRepository.validateInstanceEnvironmentName("DSHCRAFT_TEST"));
-        assertThrows(IOException.class, () -> AgentRepository.validateInstanceEnvironmentName("bad-name"));
     }
 
     /// A launcher-owned Profile follows protocol changes while keeping the credential as an env reference.

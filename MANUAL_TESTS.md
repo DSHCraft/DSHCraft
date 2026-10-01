@@ -1,5 +1,63 @@
 # DSHCraft - Manual Smoke Tests
 
+## 2026-10-01 merged instance management and resource downloads
+
+- Executed `:HMCL:build :HMCL:makeExecutables --offline --no-daemon`: 287 tests, 0 failures/errors, 10 optional skips.
+- Isolated production-JAR JavaFX probe passed 24 assertions. Verified wide instance browsing, management content width at 800x500, switching instances while retaining the selected category, editor rebinding and persisted edits after repository reload, typed resource lists, and the Core recovery action. Scene snapshots are in `artifacts/ui-20261001/`; these are rendered scenes, not desktop click acceptance.
+- Local HTTP tests cover skill download isolation and invalid remote URLs. Mod regression simulates an unavailable Core catalog, verifies cached numeric version selection, concrete-version bypass, and failure without a complete local Core.
+- Built JAR and Windows EXE pass the launcher's unchanged RSA verifier using its embedded project public key. Authenticode reports `Valid` for the local EXE signed with the existing DSHCraft Development Code Signing certificate.
+- Reproduced direct Authenticode signing breaking Java's native `-jar` reader (`Invalid or corrupt jarfile`), while the unsigned counterpart launched. The signing helper reserves the appended certificate tail as a ZIP comment before final signing. The fixed signed EXE directly launched the DSHCraft window and the JavaFX process stayed responsive; both native and payload signatures verified.
+- The signing helper was also executed successfully with Windows PowerShell 5.1. Source packaging verifies inclusion of the Windows icon and signing helpers and signing documentation.
+- Actual pre-fix native workspace was inspected and its nested empty 200px editor rail confirmed. Subsequent desktop automation reported user input/minimized-window errors; final native click acceptance remains pending.
+- [ ] In the final preview, open Current DSH and switch instances from the directory selector; confirm only the chosen instance's fields change.
+- [ ] Open DSH Instances and verify full names and readable row actions; open one instance and use Plugins, MCP servers and Skills.
+- [ ] Add an HTTP MCP endpoint and import/download a skill from Downloads. Verify the intended instance's files and installed management; restart DSH to confirm the MCP connection and skill discovery.
+- [ ] Use Downloads > Tools to select and install a compatible published package through DSH, then manage it under Plugins.
+- [ ] Verify Mod operations recover from a `latest` catalog reset using cached Core, without replaying the plugin operation or silently changing registry source.
+
+## 2026-09-30 — Separate resource pages
+
+Executed in the rebuilt native Windows preview:
+- Opened the instance browser and standalone management page.
+- Clicked Plugins, MCP servers and Skills separately. Plugins contained only optional Bundle entries; MCP and Skills contained no built-in placeholders.
+- Verified each category's own add button and absence of resource run rockets / enable radio buttons.
+- Started preview from .hmcl/previews/ and confirmed the temporary-directory warning did not appear.
+- Build: 284 tests, 0 failures, 10 optional skips. JavaFX scene probe: 18 assertions passed.
+
+Still separate operational acceptance:
+- [ ] Add a real plugin, inspect its resolved version, update/remove it in an isolated Profile.
+- [ ] Configure a real MCP endpoint or stdio server and verify authentication plus tool use.
+- [ ] Import a local skill and verify the selected instance can use it.
+- [ ] Verify the typed editor's category-specific field validation and cancellation behavior with real input.
+
+
+## 2026-09-30 — Core metadata interruption
+
+- Executed actual-window capture of Connection reset from the Core catalog request.
+- Red/green: interrupted local HTTP response failed before the fix, then recovered on the second request. Permanent interruption stopped at three requests; HTTP 403 was not retried; certificate/validation errors were not classified as retryable.
+- Production Java metadata query succeeded against npm, reporting 0.2.0-rc.2 and 29 releases. This is metadata retrieval, not an installation acceptance.
+- Isolated JavaFX recovery dialog was rendered and its Retry action verified present.
+- [ ] In the latest native preview, interrupt an installation lookup and verify the concise failure dialog; click Download settings, return and retry.
+- [ ] Complete real Core installation/start separately using an isolated instance and current upstream requirements.
+
+
+## 2026-09-30 — Native instance browser and management
+
+Executed:
+- Final :HMCL:build --no-daemon passed: 278 tests, 0 failures, 10 optional skips.
+- artifacts/ui-20260930/UiProbe.java ran against the final built JAR in a disposable HMCL home. Eight assertions passed: wide list, native sidebars, no horizontal header, model replacement fixture, editor rebinding, saved name, bound window title, Core category navigation.
+- Actual JavaFX scene snapshots were rendered and inspected at 1000×600: instance-list.png, instance-settings.png and instance-versions.png. These are scene renders, not desktop screenshots.
+- Windows previews were launched. Native input was repeatedly interrupted by minimized windows/user activity; do not treat the final click flow as completed.
+
+Pending final-window acceptance:
+- [ ] Open DSH instances: left rail shows local instances, add, import and settings; center shows refresh/search and readable full-width rows.
+- [ ] Open a row: separate management page has left categories and lower actions, with no second instance list or large horizontal header.
+- [ ] Return to browser, refresh, reopen the instance, change its name, return and reopen; both row and management title retain the saved name.
+- [ ] Switch settings/versions/extensions/advanced, open an extension and return; correct instance context and selected category are retained.
+- [ ] Create and switch between two disposable instances; verify independent field values.
+- [ ] Verify default 800×500 window size and common display scaling. Do not download packages or use production API keys merely for layout checks.
+
+
 ## 2026-09-29 DSH Plugin Market
 
 - Executed in the final isolated Windows HMCL preview: Downloads > Plugins directly displayed live npm rows; the Source chooser showed npm, npmmirror, Huawei, Tencent and a custom URL; a published-version dialog opened and was cancelled. Instance version management displayed the custom package row and `.tgz` drop hint. No package was installed by this window check.

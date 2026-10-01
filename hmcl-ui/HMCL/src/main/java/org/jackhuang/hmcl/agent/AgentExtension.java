@@ -45,12 +45,30 @@ public final class AgentExtension implements AgentEntry {
             if (BUILTIN_IDS.contains(this.id.get())) return i18n("agent.mod.builtin");
             String path = this.location.get();
             String version = this.installedVersion.get();
-            String state = version == null || version.isBlank()
-                    ? (this.enabled.get() ? "Enabled" : "Not installed")
-                    : "Installed " + version;
+            String state;
+            if ("MCP".equalsIgnoreCase(this.type.get())) {
+                state = i18n(this.enabled.get() ? "agent.resources.enabled" : "agent.resources.disabled");
+            } else if ("Skill".equalsIgnoreCase(this.type.get())) {
+                state = i18n(this.enabled.get() ? "agent.resources.imported" : "agent.resources.not_imported");
+            } else {
+                state = version == null || version.isBlank()
+                        ? i18n("agent.resources.not_installed") : i18n("agent.resources.installed", version);
+            }
             return state + (path == null || path.isBlank() ? "" : "  /  " + path);
-        }, this.id, this.location, this.enabled, this.installedVersion));
+        }, this.id, this.type, this.location, this.enabled, this.installedVersion));
         tag.bind(this.type);
+    }
+
+    /// Distinguishes built-in Core capabilities from independently configured resources.
+    public boolean isBuiltin() {
+        return BUILTIN_IDS.contains(getId());
+    }
+
+    /// Bundles share the npm plugin lifecycle; MCP and Skill remain separate categories.
+    public boolean belongsToCategory(String category) {
+        if (isBuiltin()) return false;
+        return category.equalsIgnoreCase(type.get())
+                || "Plugin".equalsIgnoreCase(category) && "Bundle".equalsIgnoreCase(type.get());
     }
 
     @Override

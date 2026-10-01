@@ -36,11 +36,13 @@ public final class AgentEditorPage extends DecoratorAnimatedPage implements Deco
     /// HMCL settings-style root list.
     private final VBox rootPane = new VBox(10);
     /// HMCL row container.
-    private final ComponentList list = new ComponentList();
+    private ComponentList list = new ComponentList();
 
     /// Creates an editor with HMCL SettingsPage padding and smooth scrolling.
     public AgentEditorPage(String title) {
         state = new ReadOnlyObjectWrapper<>(State.fromTitle(title));
+        getLeft().setManaged(false);
+        getLeft().setVisible(false);
         rootPane.setPadding(new Insets(10));
         rootPane.getChildren().add(list);
 
@@ -50,9 +52,14 @@ public final class AgentEditorPage extends DecoratorAnimatedPage implements Deco
         setCenter(scrollPane);
     }
 
-    /// Adds an HMCL ComponentList section title above the field list.
+    /// Starts an HMCL settings section without merging unrelated settings into one list.
     public AgentEditorPage addSection(String title) {
-        rootPane.getChildren().add(0, ComponentList.createComponentListTitle(title));
+        if (list.getContent().isEmpty()) {
+            rootPane.getChildren().add(rootPane.getChildren().indexOf(list), ComponentList.createComponentListTitle(title));
+        } else {
+            list = new ComponentList();
+            rootPane.getChildren().addAll(ComponentList.createComponentListTitle(title), list);
+        }
         return this;
     }
 
@@ -106,12 +113,10 @@ public final class AgentEditorPage extends DecoratorAnimatedPage implements Deco
         row.setTitle(title);
         row.setSubtitle(subtitle);
         row.setTrailingIcon(SVG.EDIT);
-        Runnable updateLabel = () -> {
+        row.trailingTextProperty().bind(javafx.beans.binding.Bindings.createStringBinding(() -> {
             int index = java.util.Arrays.asList(values).indexOf(property.get());
-            row.setTrailingText(index >= 0 ? labels[index] : property.get());
-        };
-        updateLabel.run();
-        property.addListener(observable -> updateLabel.run());
+            return index >= 0 ? labels[index] : property.get();
+        }, property));
         row.setOnAction(event -> {
             PromptDialogPane.Builder.CandidatesQuestion question =
                     new PromptDialogPane.Builder.CandidatesQuestion(title, labels);

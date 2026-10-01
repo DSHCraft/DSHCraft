@@ -15,7 +15,9 @@ if (-not (Test-Path -LiteralPath $jarSource -PathType Leaf)) {
 # Every preview owns an immutable executable copy. Gradle may replace build/libs
 # while this process is alive, but must never replace the JAR it is loading.
 if (-not $PreviewDirectory) {
-    $previewDirectory = Join-Path ([IO.Path]::GetTempPath()) ('dshcraft-preview-' + [guid]::NewGuid().ToString('N'))
+    # Keep executable and test state outside Windows Temp so HMCL's data-loss
+    # warning is not triggered by our own preview workflow.
+    $previewDirectory = Join-Path $projectRoot ('.hmcl\previews\' + [guid]::NewGuid().ToString('N'))
 } else {
     $previewDirectory = [IO.Path]::GetFullPath($PreviewDirectory)
 }

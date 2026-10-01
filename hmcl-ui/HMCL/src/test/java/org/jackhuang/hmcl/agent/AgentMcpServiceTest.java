@@ -92,6 +92,7 @@ public class AgentMcpServiceTest {
     /// Stdio descriptors cannot smuggle an environment map or malformed command into launcher state.
     @Test
     public void rejectsUnsafeStdioDescriptor() {
+        assertThrows(IOException.class, () -> AgentMcpService.validateStdioDescriptor("{\"args\":[\"-y\"]}"));
         AgentExtension server = new AgentExtension("bad-stdio", "Bad stdio", "MCP",
                 "stdio:{\"command\":\"node\",\"env\":{\"TOKEN\":\"secret\"}}", false);
         assertThrows(IOException.class, () -> AgentMcpService.ensurePatch(temporary, List.of(server)));

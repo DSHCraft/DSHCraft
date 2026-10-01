@@ -62,6 +62,27 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
     private final boolean showProviderSidebar;
     /// Whether the list's third toolbar action imports a local extension catalog.
     private final boolean showExtensionCatalogAction;
+    /// Creation and import actions belong to the instance browser navigation rail.
+    private boolean navigationToolbar;
+    /// Resource categories open their own editors instead of pretending every resource can launch.
+    private boolean resourceList;
+    /// Optional catalog navigation replaces creation of an empty local entry.
+    private @Nullable Runnable addNavigationAction;
+
+    /// Routes the add button into a catalog while preserving normal add behavior for other resource types.
+    public void setAddNavigationAction(Runnable action) {
+        addNavigationAction = action;
+    }
+
+    /// Hides generic catalog/toggle controls in a typed resource management page.
+    public void useResourceList() {
+        resourceList = true;
+    }
+
+    /// Keeps refresh and search in the list toolbar while navigation owns creation actions.
+    public void useNavigationToolbar() {
+        navigationToolbar = true;
+    }
 
     /// Creates one Agent list page while keeping all visual behavior in HMCL shared controls.
     public AgentListPage(
@@ -241,14 +262,20 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
         protected List<ToolbarAction> toolbarActions() {
             List<ToolbarAction> actions = new ArrayList<>();
             actions.add(new ToolbarAction(i18n("button.refresh"), SVG.REFRESH, this::refreshList));
+            if (navigationToolbar) return actions;
             actions.add(new ToolbarAction(addLabel, SVG.ADD_CIRCLE, () -> {
+                if (addNavigationAction != null) {
+                    addNavigationAction.run();
+                    return;
+                }
                 T added = addAction.get();
                 if (added != null) openAction.accept(added);
             }));
+            if (resourceList) return actions;
             actions.add(showExtensionCatalogAction
                     ? new ToolbarAction(i18n("agent.extension.catalog"), SVG.PACKAGE2,
                             AgentPages::importExtensionCatalog)
-                    : new ToolbarAction(i18n("agent.extensions"), SVG.PACKAGE2,
+                    : new ToolbarAction(i18n("agent.resources.plugins"), SVG.PACKAGE2,
                             () -> org.jackhuang.hmcl.ui.Controllers.navigate(AgentPages.extensions())));
             return actions;
         }
@@ -331,6 +358,8 @@ public final class AgentListPage<T extends AgentEntry> extends DecoratorAnimated
             /// Reflects the externally managed Agent selection state.
             @Override
             protected void bindSelection(T item) {
+                selectionButton.setVisible(!resourceList);
+                selectionButton.setManaged(!resourceList);
                 selectionButton.setSelected(selectedPredicate.test(item));
             }
 

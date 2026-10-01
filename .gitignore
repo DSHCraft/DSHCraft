@@ -25,3 +25,4 @@ src-tauri/target/
 .env.*
 !.env.example
 artifacts/
+/.hmcl/

@@ -15,9 +15,10 @@ if (-not $outputPath.StartsWith($artifacts + [IO.Path]::DirectorySeparatorChar,
 $inputs = @(
     'hmcl-ui', 'README.md', 'LICENSE', 'NOTICE.md', 'OPEN_SOURCE.md',
     'CONTRIBUTING.md', 'SECURITY.md', 'DISCLAIMER.md', 'THIRD_PARTY_NOTICES.md',
-    'BINARY_LICENSE_AUDIT.md', 'CHANGELOG.md', 'MANUAL_TESTS.md', 'licenses',
+    'BINARY_LICENSE_AUDIT.md', 'SIGNING.md', 'CHANGELOG.md', 'MANUAL_TESTS.md', 'licenses',
     'START_HERE.cmd', 'START_HERE.sh',
     'scripts/start-hmcl-preview.ps1', 'scripts/create-hmcl-source-package.ps1',
+    'scripts/windows',
     '.github/workflows/ci.yml'
 )
 foreach ($item in $inputs) {
@@ -27,7 +28,7 @@ foreach ($item in $inputs) {
 }
 
 $excludes = @(
-    '*/build', '*/.gradle', '*/.idea', '*/.hmcl', '*/.local', '*/out',
+    '*/build', '*/.gradle', '*/.idea', '*/.hmcl', '*/.local', '*/out', '*/artifacts',
     'hmcl-ui/.github', 'hmcl-ui/.gitee', 'hmcl-ui/.cnb',
     '*.class', '*.log', '*.exe', '*.deb', '*.pfx', '*.p12',
     '*.key', '*.key.pem', '*.private', '*.sigstore',
@@ -44,7 +45,8 @@ try {
     foreach ($required in @('hmcl-ui/LICENSE', 'hmcl-ui/gradlew.bat',
             'hmcl-ui/HMCL/src/main/resources/assets/img/dshcraft-mark.png', 'NOTICE.md',
             'BINARY_LICENSE_AUDIT.md', 'licenses/ANTLR-4.11.1-BSD-3-Clause.txt',
-            'CHANGELOG.md', 'MANUAL_TESTS.md', '.github/workflows/ci.yml')) {
+            'CHANGELOG.md', 'MANUAL_TESTS.md', '.github/workflows/ci.yml',
+            'scripts/windows/set-pe-icon.ps1', 'scripts/windows/sign-launcher.ps1', 'SIGNING.md')) {
         if ($entries -notcontains $required) { throw "Archive lacks $required" }
     }
     if (@($entries | Where-Object {

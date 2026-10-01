@@ -33,6 +33,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
@@ -52,8 +53,6 @@ public final class AgentPages {
     private static @Nullable AgentListPage<AgentProvider> providers;
     /// Lazily-created instance list page.
     private static @Nullable AgentInstanceWorkspacePage instances;
-    /// Lazily-created extension list page.
-    private static @Nullable AgentListPage<AgentExtension> extensions;
     /// Lazily-created settings shell.
     private static @Nullable AgentSettingsPage settings;
     /// Lazily-created live DSH output page.
@@ -135,31 +134,60 @@ public final class AgentPages {
     /// Returns the HMCL-native Plugin/MCP/Skill list page.
     public static AgentListPage<AgentExtension> extensions() {
         AgentRepository repo = AgentRepository.get();
-        AgentInstance selected = repo.getSelectedInstance();
-        if (selected != null) {
+        AgentInstance instance = repo.getSelectedInstance();
+        if (instance == null) throw new IllegalStateException("No DSH instance selected");
+        return newInstanceExtensionPage(instance, "Plugin");
+    }
+
+    /// Creates a dedicated instance-bound extension list, keeping the global catalog page intact.
+    static AgentListPage<AgentExtension> newInstanceExtensionPage(AgentInstance instance, String category) {
+        AgentRepository repo = AgentRepository.get();
+        Runnable refresh = () -> {
             try {
-                repo.refreshInstalledMods(selected);
+                repo.refreshInstalledMods(instance);
             } catch (IOException error) {
                 showError(i18n("agent.mod.sync.failed"), error);
             }
+        };
+        if ("Plugin".equals(category)) refresh.run();
+        String title = resourceTitle(category);
+        javafx.collections.transformation.FilteredList<AgentExtension> items =
+                new javafx.collections.transformation.FilteredList<>(repo.getExtensions(),
+                        extension -> extension.belongsToCategory(category));
+        AgentListPage<AgentExtension> page = new AgentListPage<>(title, items,
+                () -> {
+                    AgentExtension entry = repo.addExtension(category);
+                    entry.nameProperty().set(i18n("agent.resources.new." + category.toLowerCase(java.util.Locale.ROOT)));
+                    return entry;
+                }, refresh, AgentPages::openExtension, AgentPages::openExtension, AgentPages::removeModEntry,
+                null, extension -> repo.hasExtension(instance, extension),
+                repo.selectedInstanceProperty(), i18n("agent.resources.add." + category.toLowerCase(java.util.Locale.ROOT)),
+                "", false, false);
+        page.useResourceList();
+        if ("Plugin".equals(category)) {
+            page.setAddNavigationAction(() -> {
+                @Nullable AgentInstance current = repo.findInstance(instance.getId());
+                if (current == null) {
+                    Controllers.dialog(i18n("agent.instance.empty"), i18n("message.error"), MessageDialogPane.MessageType.WARNING);
+                    return;
+                }
+                repo.setSelectedInstance(current);
+                AgentDownloadsPage catalog = downloads();
+                catalog.showPlugins();
+                Controllers.navigate(catalog);
+            });
         }
-        if (extensions == null) {
-            extensions = new AgentListPage<>(
-                    i18n("agent.extensions"),
-                    repo.getExtensions(),
-                    repo::addExtension,
-                    repo::load,
-                    AgentPages::openExtension,
-                    AgentPages::toggleMod,
-                    AgentPages::removeModEntry,
-                    AgentPages::toggleMod,
-                    extension -> repo.getSelectedInstance() != null
-                            && repo.hasExtension(repo.getSelectedInstance(), extension),
-                    repo.selectedInstanceProperty(),
-                    i18n("agent.extension.add"),
-                    i18n("agent.extension.toggle"), false, true);
-        }
-        return extensions;
+        return page;
+    }
+
+    /// Provides separate navigation names for resources with different lifecycle contracts.
+    static String resourceTitle(String category) {
+        return i18n(switch (category) {
+            case "Plugin" -> "agent.resources.plugins";
+            case "MCP" -> "agent.resources.mcp";
+            case "Skill" -> "agent.resources.skills";
+            default -> throw new IllegalArgumentException("Unsupported resource category: " + category);
+        });
     }
 
     /// Opens a provider editor with online model discovery while preserving the HMCL settings-row visual implementation.
@@ -242,59 +270,71 @@ public final class AgentPages {
 
     /// Opens the instance's Core and launch settings without provider creation controls.
     public static void openInstance(AgentInstance instance) {
-        openInstanceInWorkspace(instance, Controllers::navigate);
+        Controllers.navigate(new AgentInstanceManagementPage(instance.getId()));
+    }
+
+    /// Returns from resource downloads to the current instance's native category management.
+    static void openInstanceCategory(String category) {
+        @Nullable AgentInstance selected = requireSelectedInstance();
+        if (selected == null) return;
+        AgentInstanceManagementPage page = new AgentInstanceManagementPage(selected.getId());
+        page.showCategory(switch (category) {
+            case "MCP" -> "mcp";
+            case "SKILLS" -> "skills";
+            case "PLUGINS", "TOOLS" -> "mods";
+            default -> "settings";
+        });
+        Controllers.navigate(page);
     }
 
     /// Builds and navigates the version/Profile editor for a selected instance.
-    static void openInstanceInWorkspace(AgentInstance instance, java.util.function.Consumer<Node> display) {
+    static void populateInstanceManagement(AgentInstance instance, AgentInstanceManagementPage page) {
         AgentRepository repository = AgentRepository.get();
-        AgentEditorPage page = new AgentEditorPage(instance.getName())
-                .addText(i18n("agent.field.name"), i18n("agent.field.name.instance.subtitle"), instance.nameProperty(), false)
-                .addText(i18n("agent.field.description"), i18n("agent.field.description.subtitle"), instance.descriptionProperty(), true)
-                .addReadOnlyText(i18n("agent.field.id"), i18n("agent.field.id.subtitle"), instance.idProperty())
-                .addReadOnlyText(i18n("agent.field.core_version"), i18n("agent.field.core_version.subtitle"), instance.coreVersionProperty())
-                .addAction(i18n("agent.core.select"), i18n("agent.core.select.subtitle"), SVG.DOWNLOAD,
-                        () -> selectCoreVersion(instance))
-                .addAction(i18n("agent.core.browse"), i18n("agent.core.browse.subtitle"), SVG.SEARCH,
-                        () -> {
-                            repository.setSelectedInstance(instance);
-                            AgentDownloadsPage downloadPage = downloads();
-                            downloadPage.showCore();
-                            Controllers.navigate(downloadPage);
-                        })
-                .addAction(i18n("agent.core.install"), i18n("agent.core.install.subtitle"), SVG.DOWNLOAD,
-                        () -> installCore(instance))
-                .addLabeledChoice(i18n("agent.instance.provider.select"), i18n("agent.instance.provider.select.subtitle"),
+        AgentEditorPage overview = new AgentEditorPage(instance.getName())
+                .addSection(i18n("agent.workspace.basic"))
+                .addText(i18n("agent.field.name"), "", instance.nameProperty(), false)
+                .addText(i18n("agent.field.description"), "", instance.descriptionProperty(), true)
+                .addSection(i18n("agent.workspace.service"))
+                .addLabeledChoice(i18n("agent.instance.provider.select"), "",
                         instance.providerIdProperty(),
                         repository.getProviders().stream().map(AgentProvider::getId).toArray(String[]::new),
                         repository.getProviders().stream().map(AgentProvider::getName).toArray(String[]::new))
-                .addText(i18n("agent.field.profile_name"), i18n("agent.field.profile_name.subtitle"), instance.profileNameProperty(), false)
-                .addText(i18n("agent.field.profile_template"), i18n("agent.field.profile_template.subtitle"), instance.profileTemplateProperty(), false)
-                .addText(i18n("agent.field.web_port"), i18n("agent.field.web_port.subtitle"), instance.webPortProperty(), false)
-                .addText(i18n("agent.field.model"), i18n("agent.field.model.instance.subtitle"), instance.modelProperty(), true)
-                .addText(i18n("agent.field.extension_ids"), i18n("agent.field.extension_ids.subtitle"), instance.extensionIdsProperty(), true)
-                .addAction(i18n("agent.extensions"), i18n("agent.mod.instance.subtitle"), SVG.EXTENSION,
-                        () -> {
-                            repository.setSelectedInstance(instance);
-                            Controllers.navigate(extensions());
-                        })
-                .addAction(i18n("agent.plugin.custom.add"), i18n("agent.plugin.custom.subtitle"), SVG.ADD_CIRCLE,
-                        () -> requestCustomPlugin(instance))
-                .addText(i18n("agent.field.arguments"), i18n("agent.field.arguments.subtitle"), instance.argumentsProperty(), true)
-                .addText(i18n("agent.field.cwd"), i18n("agent.field.cwd.subtitle"), instance.workingDirectoryProperty(), true)
-                .addAction(i18n("agent.pack.export"), i18n("agent.pack.export.subtitle"), SVG.OUTPUT,
-                        () -> exportPack(instance))
-                .addAction(i18n("agent.instance.validate"), i18n("agent.instance.validate.subtitle"), SVG.CHECK,
-                        () -> validateInstance(instance))
-                .addAction(i18n("agent.instance.home.open"), AgentRepository.get().getInstanceHome(instance).toString(), SVG.FOLDER_OPEN,
-                        () -> showInstanceHome(instance))
-                .addAction(i18n("agent.console"), i18n("agent.console.subtitle"), SVG.SCRIPT,
-                        AgentPages::showConsole)
-                .addAction(i18n("agent.launch"), i18n("agent.launch.subtitle"), SVG.ROCKET_LAUNCH,
-                        () -> launch(instance));
-        FXUtils.applyDragListener(page, path -> Files.isRegularFile(path)
-                        && isNpmTarball(path), paths -> installCustomPlugin(instance, paths.get(0).toString()));
-        display.accept(page);
+                .addText(i18n("agent.field.model"), i18n("agent.workspace.model.hint"), instance.modelProperty(), true)
+                .addText(i18n("agent.field.cwd"), i18n("agent.workspace.cwd.hint"), instance.workingDirectoryProperty(), true);
+        AgentEditorPage versions = new AgentEditorPage(i18n("agent.workspace.components"))
+                .addSection(i18n("agent.field.core_version"))
+                .addReadOnlyText(i18n("agent.field.core_version"), "", instance.coreVersionProperty())
+                .addAction(i18n("agent.core.select"), "", SVG.DOWNLOAD, () -> selectCoreVersion(instance))
+                .addAction(i18n("agent.core.browse"), "", SVG.SEARCH, () -> {
+                    repository.setSelectedInstance(instance);
+                    AgentDownloadsPage downloadPage = downloads();
+                    downloadPage.showCore();
+                    Controllers.navigate(downloadPage);
+                })
+                .addAction(i18n("agent.core.install"), "", SVG.DOWNLOAD, () -> installCore(instance))
+                .addAction(i18n("agent.resources.plugins"), "", SVG.EXTENSION, () -> {
+                    repository.setSelectedInstance(instance);
+                    Controllers.navigate(extensions());
+                })
+                .addAction(i18n("agent.plugin.custom.add"), i18n("agent.workspace.drop.hint"), SVG.ADD_CIRCLE,
+                        () -> requestCustomPlugin(instance));
+        AgentEditorPage advanced = new AgentEditorPage(i18n("agent.workspace.advanced"))
+                .addReadOnlyText(i18n("agent.field.id"), "", instance.idProperty())
+                .addText(i18n("agent.field.profile_name"), "", instance.profileNameProperty(), false)
+                .addText(i18n("agent.field.profile_template"), "", instance.profileTemplateProperty(), false)
+                .addText(i18n("agent.field.web_port"), "", instance.webPortProperty(), false)
+                .addText(i18n("agent.field.extension_ids"), "", instance.extensionIdsProperty(), true)
+                .addText(i18n("agent.field.arguments"), "", instance.argumentsProperty(), true)
+                .addAction(i18n("agent.instance.validate"), "", SVG.CHECK, () -> validateInstance(instance))
+                .addAction(i18n("agent.instance.home.open"), "", SVG.FOLDER_OPEN, () -> showInstanceHome(instance));
+        versions.addSection(i18n("agent.resources.builtin"));
+        for (AgentExtension capability : repository.getExtensions()) {
+            if (capability.isBuiltin()) versions.addReadOnlyText(capability.getName(), "",
+                    new javafx.beans.property.SimpleStringProperty(i18n("agent.mod.builtin")));
+        }
+        page.showSections(instance, overview, versions, advanced);
+        FXUtils.applyDragListener(page, file -> Files.isRegularFile(file)
+                        && isNpmTarball(file), files -> installCustomPlugin(instance, files.get(0).toString()));
     }
 
     /// Identifies npm package archives accepted by the instance version manager.
@@ -324,20 +364,22 @@ public final class AgentPages {
     /// Removes an instance from the embedded workspace after the same confirmation used by the standalone list.
     static void removeInstanceFromWorkspace(AgentInstance instance) {
         removeInstance(instance, () -> {
-            if (instances != null) instances.showInstance(AgentRepository.get().getSelectedInstance());
+            Controllers.navigate(instances());
         });
     }
 
     /// Opens an extension editor using only upstream HMCL controls.
     public static void openExtension(AgentExtension extension) {
         AgentEditorPage page = new AgentEditorPage(extension.getName())
-                .addText(i18n("agent.field.name"), i18n("agent.field.name.extension.subtitle"), extension.nameProperty(), false)
-                .addReadOnlyText(i18n("agent.field.id"), i18n("agent.field.id.subtitle"), extension.idProperty())
-                .addText(i18n("agent.field.type"), i18n("agent.field.type.extension.subtitle"), extension.typeProperty(), false)
-                .addText(i18n("agent.field.location"),
-                        "mcp".equalsIgnoreCase(extension.typeProperty().get())
-                                ? i18n("agent.mcp.location.subtitle") : i18n("agent.field.location.subtitle"),
-                        extension.locationProperty(), true);
+                .addText(i18n("agent.field.name"), "", extension.nameProperty(), false)
+                .addReadOnlyText(i18n("agent.field.type"), "", extension.typeProperty());
+        if (isPackageBacked(extension)) {
+            page.addText(i18n("agent.resources.package"), i18n("agent.resources.package.hint"), extension.locationProperty(), false);
+        } else if ("MCP".equalsIgnoreCase(extension.typeProperty().get())) {
+            page.addText(i18n("agent.resources.connection"), i18n("agent.mcp.location.subtitle"), extension.locationProperty(), false);
+        } else {
+            page.addReadOnlyText(i18n("agent.resources.skill.source"), "", extension.locationProperty());
+        }
         if (isPackageBacked(extension)) {
             page.addAction(i18n("agent.mod.install"), i18n("agent.mod.install.subtitle"), SVG.DOWNLOAD,
                             () -> manageMod(extension, DshModService.Action.INSTALL))
@@ -452,6 +494,139 @@ public final class AgentPages {
             repository.save();
             Controllers.showToast(i18n("agent.skill.import.success", installed.getFileName()));
         }));
+    }
+
+    /// Configures a remote HTTP MCP server in the selected instance without storing credentials in its URL.
+    public static void addHttpMcp() {
+        addMcpServer(false);
+    }
+
+    /// Configures a local stdio MCP process using DSH's existing MCP client overlay.
+    public static void addStdioMcp() {
+        addMcpServer(true);
+    }
+
+    /// Collects a server name and one validated endpoint or local command descriptor.
+    private static void addMcpServer(boolean stdio) {
+        AgentInstance instance = requireSelectedInstance();
+        if (instance == null) return;
+        PromptDialogPane.Builder.StringQuestion name = new PromptDialogPane.Builder.StringQuestion(
+                i18n("agent.downloads.mcp.name"), "");
+        PromptDialogPane.Builder.StringQuestion address = new PromptDialogPane.Builder.StringQuestion(
+                i18n(stdio ? "agent.downloads.mcp.command" : "agent.downloads.mcp.url"),
+                stdio ? "" : "https://");
+        if (stdio) address.setPromptText("{\"command\":\"npx\",\"args\":[\"-y\",\"package-name\"]}");
+        Controllers.prompt(new PromptDialogPane.Builder(
+                i18n(stdio ? "agent.downloads.mcp.stdio" : "agent.downloads.mcp.http"),
+                (questions, handler) -> {
+                    String label = name.getValue() == null ? "" : name.getValue().trim();
+                    if (label.isEmpty() || label.length() > 120) {
+                        handler.reject(i18n("agent.downloads.mcp.name.invalid"));
+                        return;
+                    }
+                    try {
+                        if (stdio) AgentMcpService.validateStdioDescriptor(address.getValue());
+                        else AgentMcpService.validateEndpoint(address.getValue());
+                        handler.resolve();
+                    } catch (IOException error) {
+                        handler.reject(error.getMessage());
+                    }
+                }).addQuestion(name).addQuestion(address)).thenAccept(ignored -> {
+            AgentRepository repository = AgentRepository.get();
+            if (!repository.getInstances().contains(instance)) return;
+            String id = "mcp-" + java.util.UUID.randomUUID().toString().substring(0, 18);
+            String location = stdio ? "stdio:" + address.getValue().trim() : address.getValue().trim();
+            AgentExtension server = new AgentExtension(id, name.getValue().trim(), "MCP", location, true);
+            try {
+                List<AgentExtension> enabled = new java.util.ArrayList<>(repository.getExtensions().stream()
+                        .filter(entry -> "MCP".equalsIgnoreCase(entry.typeProperty().get())
+                                && !"mcp-client".equals(entry.getId())
+                                && repository.hasExtension(instance, entry)).toList());
+                enabled.add(server);
+                Set<String> bearerTokens = new java.util.LinkedHashSet<>();
+                if (AgentSecretStore.isSupported()) {
+                    for (AgentExtension entry : enabled) {
+                        if (AgentSecretStore.hasMcp(entry.getId())) bearerTokens.add(entry.getId());
+                    }
+                }
+                AgentMcpService.ensurePatch(repository.getInstanceHome(instance), enabled, bearerTokens);
+                repository.addImportedExtension(server);
+                repository.setExtensionInstalled(instance, server, true);
+                repository.save();
+                Controllers.showToast(i18n("agent.downloads.mcp.added", server.getName()));
+            } catch (IOException error) {
+                showError(i18n("agent.mcp.failed"), error);
+            }
+        });
+    }
+
+    /// Imports a local skill bundle from Downloads into the selected isolated DSH_HOME.
+    public static void importSelectedSkill() {
+        AgentInstance instance = requireSelectedInstance();
+        if (instance == null) return;
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle(i18n("agent.skill.import"));
+        @Nullable Path source = Controllers.showDialog(chooser);
+        if (source != null) installSelectedSkill(instance, source.toString(),
+                () -> AgentSkillService.install(source, AgentRepository.get().getInstanceHome(instance)));
+    }
+
+    /// Downloads a public single-file SKILL.md into the selected isolated DSH_HOME.
+    public static void downloadSkill() {
+        AgentInstance instance = requireSelectedInstance();
+        if (instance == null) return;
+        Controllers.prompt(i18n("agent.downloads.skill.url"), (value, handler) -> {
+            try {
+                AgentSkillService.remoteSkillName(URI.create(value == null ? "" : value.trim()));
+                handler.resolve();
+            } catch (IllegalArgumentException | IOException error) {
+                handler.reject(error.getMessage());
+            }
+        }, "https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<skill>/SKILL.md")
+                .thenAccept(url -> installSelectedSkill(instance, url.trim(),
+                        () -> AgentSkillService.download(URI.create(url.trim()),
+                                AgentRepository.get().getInstanceHome(instance))));
+    }
+
+    /// Runs one skill transfer and registers it only after the isolated installation succeeds.
+    private static void installSelectedSkill(AgentInstance instance, String source,
+                                             java.util.concurrent.Callable<Path> operation) {
+        Controllers.showToast(i18n("agent.skill.import.running"));
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return operation.call();
+            } catch (Exception error) {
+                if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+                throw new CompletionException(error);
+            }
+        }).whenComplete((installed, error) -> Platform.runLater(() -> {
+            if (error != null) {
+                showError(i18n("agent.skill.import.failed"), rootCause(error));
+                return;
+            }
+            AgentRepository repository = AgentRepository.get();
+            if (!repository.getInstances().contains(instance)) return;
+            String skillName = installed.getFileName().toString();
+            String id = "skill-" + java.util.UUID.nameUUIDFromBytes(
+                    skillName.getBytes(StandardCharsets.UTF_8)).toString().substring(0, 18);
+            AgentExtension entry = repository.getExtensions().stream()
+                    .filter(extension -> extension.getId().equals(id)).findFirst().orElse(null);
+            if (entry == null) {
+                entry = new AgentExtension(id, skillName, "Skill", source, true);
+                repository.addImportedExtension(entry);
+            }
+            repository.setExtensionInstalled(instance, entry, true);
+            repository.save();
+            Controllers.showToast(i18n("agent.skill.import.success", skillName));
+        }));
+    }
+
+    /// Requires a selected instance before any download or MCP configuration begins.
+    private static @Nullable AgentInstance requireSelectedInstance() {
+        AgentInstance instance = AgentRepository.get().getSelectedInstance();
+        if (instance == null) Controllers.dialog(i18n("agent.mod.instance.required"),
+                i18n("message.error"), MessageDialogPane.MessageType.WARNING);
+        return instance;
     }
 
     /// Only npm-backed Plugin/Bundle entries can be passed to DSH's plugin command.
@@ -622,7 +797,7 @@ public final class AgentPages {
         }).whenComplete((runtime, error) -> Platform.runLater(() -> {
             BUSY_PROFILES.remove(busyKey);
             if (error != null) {
-                showError(i18n("agent.core.install.failed"), rootCause(error));
+                Controllers.dialog(coreInstallFailureDialog(instance, requested, rootCause(error), false));
             } else {
                 String concrete = runtime.getFileName().toString();
                 instance.coreVersionProperty().set(concrete);
@@ -643,7 +818,7 @@ public final class AgentPages {
     }
 
     /// Creates and reveals the isolated DSH_HOME so the action also works before the first launch.
-    private static void showInstanceHome(AgentInstance instance) {
+    static void showInstanceHome(AgentInstance instance) {
         Path home = AgentRepository.get().getInstanceHome(instance);
         try {
             Files.createDirectories(home);
@@ -682,7 +857,7 @@ public final class AgentPages {
             }).whenComplete((runtime, failure) -> Platform.runLater(() -> {
                 BUSY_PROFILES.remove(busyKey);
                 if (failure != null) {
-                    showError(i18n("agent.core.install.failed"), rootCause(failure));
+                    Controllers.dialog(coreInstallFailureDialog(instance, version, rootCause(failure), true));
                     return;
                 }
                 if (repo.getSelectedInstance() != instance
@@ -1092,7 +1267,33 @@ public final class AgentPages {
         }
     }
 
-    /// Displays a consistent HMCL error dialog containing the actionable exception details.
+    /// Offers recovery for a failed Core operation without displaying a stack trace by default.
+    static MessageDialogPane coreInstallFailureDialog(AgentInstance instance, String requested,
+                                                      Throwable failure, boolean launchAfter) {
+        @Nullable String causeMessage = rootCause(failure).getMessage();
+        String reason = causeMessage == null || causeMessage.isBlank() ? failure.getClass().getSimpleName() : causeMessage;
+        if (reason.length() > 600) reason = reason.substring(0, 600) + "…";
+        String message = i18n("agent.core.failure.help") + "\n\n"
+                + i18n("agent.core.failure.source", AgentRepository.get().getPackageRegistry()) + "\n\n" + reason;
+        return new MessageDialogPane.Builder(StringUtils.escapeXmlAttribute(message),
+                i18n("agent.core.install.failed"), MessageDialogPane.MessageType.ERROR)
+                .addAction(i18n("agent.core.failure.retry"), () -> Platform.runLater(() -> {
+                    @Nullable AgentInstance current = AgentRepository.get().findInstance(instance.getId());
+                    if (current == null) return;
+                    if (launchAfter) launch(current);
+                    else installCore(current, requested);
+                }))
+                .addAction(i18n("agent.core.failure.settings"), () -> Platform.runLater(() -> {
+                    AgentSettingsPage page = settings();
+                    page.showGeneral();
+                    Controllers.navigate(page);
+                }))
+                .addAction(i18n("agent.core.failure.details"), () -> Platform.runLater(() ->
+                        showError(i18n("agent.core.install.failed"), failure)))
+                .ok(null).build();
+    }
+
+    /// Displays explicitly requested or otherwise unhandled exception details in an HMCL dialog.
     private static void showError(String title, Throwable throwable) {
         Controllers.dialog(
                 StringUtils.escapeXmlAttribute(title + "\n\n" + StringUtils.getStackTrace(throwable)),

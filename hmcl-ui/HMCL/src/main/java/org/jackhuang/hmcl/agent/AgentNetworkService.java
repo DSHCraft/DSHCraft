@@ -11,6 +11,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -143,14 +144,7 @@ public final class AgentNetworkService {
                 .header("User-Agent", "DShCraft-Agent-Launcher")
                 .GET()
                 .build();
-        HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        String responseBody;
-        try (InputStream body = response.body()) {
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IOException("npm registry returned HTTP " + response.statusCode());
-            }
-            responseBody = readBounded(body, MAX_NPM_RESPONSE_BYTES, "npm registry response");
-        }
+        String responseBody = fetchCoreCatalogBody(request);
         JsonObject root;
         try {
             root = JsonParser.parseString(responseBody).getAsJsonObject();
@@ -178,6 +172,36 @@ public final class AgentNetworkService {
                 string(tags, "next"),
                 string(tags, "alpha"),
                 List.copyOf(releases));
+    }
+
+    /// Retries only idempotent Core metadata reads after transport interruptions, at most three times.
+    private static String fetchCoreCatalogBody(HttpRequest request) throws IOException, InterruptedException {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<InputStream> response = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                try (InputStream body = response.body()) {
+                    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                        throw new IOException("npm registry returned HTTP " + response.statusCode());
+                    }
+                    return readBounded(body, MAX_NPM_RESPONSE_BYTES, "npm registry response");
+                }
+            } catch (IOException failure) {
+                if (attempt >= 2 || !isTransientTransportFailure(failure)) throw failure;
+                Thread.sleep(200L * (attempt + 1));
+            }
+        }
+    }
+
+    /// Distinguishes truncated/reset/timed-out transport from HTTP, TLS and metadata validation errors.
+    static boolean isTransientTransportFailure(Throwable failure) {
+        for (@Nullable Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof javax.net.ssl.SSLException) return false;
+        }
+        for (@Nullable Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof java.net.SocketException || cause instanceof java.io.EOFException
+                    || cause instanceof java.net.http.HttpTimeoutException) return true;
+        }
+        return false;
     }
 
     /// Resolves a known npm registry choice or validates a custom HTTP(S) registry root.

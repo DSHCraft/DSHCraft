@@ -41,6 +41,27 @@ public class DshModServiceTest {
         assertEquals("is-number@7.0.0", DshModService.pinOfficial("is-number@7.0.0", "0.1.5-rc.2"));
     }
 
+    /// A temporary catalog outage must not block Mods when a complete managed Core is already installed.
+    @Test
+    public void usesInstalledCoreWhenLatestCatalogIsUnavailable() throws Exception {
+        Path runtimes = temporary.resolve("runtimes");
+        for (String version : java.util.List.of("0.1.9", "0.1.10-rc.2", "0.1.10-rc.10")) {
+            Path cli = runtimes.resolve(version + "/node_modules/@deepseek-ai/dsh/lib/bin.js");
+            Files.createDirectories(cli.getParent());
+            Files.writeString(cli, "");
+        }
+        int unavailablePort;
+        try (ServerSocket socket = new ServerSocket(0)) {
+            unavailablePort = socket.getLocalPort();
+        }
+        assertEquals("0.1.10-rc.10", DshModService.resolveCoreVersionForMod(runtimes, "latest",
+                "http://127.0.0.1:" + unavailablePort));
+        assertEquals("0.1.9", DshModService.resolveCoreVersionForMod(runtimes, "0.1.9",
+                "http://127.0.0.1:" + unavailablePort));
+        assertThrows(IOException.class, () -> DshModService.resolveCoreVersionForMod(
+                temporary.resolve("empty-cache"), "latest", "http://127.0.0.1:" + unavailablePort));
+    }
+
     /// Deletion uses a package name rather than a version-suffixed install spec.
     @Test
     public void removesByPackageName() {

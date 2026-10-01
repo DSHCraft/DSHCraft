@@ -43,6 +43,8 @@ import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 public final class AgentPluginMarketPage extends SearchableListPage<AgentPluginMarketPage.MarketItem> {
     /// Current remote query.
     private String query = "dsh";
+    /// Installed-management destination is stable while the remote search query changes.
+    private final boolean toolCategory;
     /// Current npm search offset.
     private int offset;
     /// Total raw npm results for paging even when a page contains no eligible plugins.
@@ -52,7 +54,14 @@ public final class AgentPluginMarketPage extends SearchableListPage<AgentPluginM
 
     /// Opens a live market list with the default DSH query.
     public AgentPluginMarketPage() {
+        this("dsh");
+    }
+
+    /// Opens the same native npm market with a category-specific initial query.
+    public AgentPluginMarketPage(String initialQuery) {
         super(FXCollections.observableArrayList());
+        query = initialQuery;
+        toolCategory = "dsh tool".equals(initialQuery);
         setOnFailedAction(event -> refreshList());
         refreshList();
     }
@@ -111,7 +120,7 @@ public final class AgentPluginMarketPage extends SearchableListPage<AgentPluginM
                     if (offset + 40 < total && offset < 1000) { offset += 40; refreshList(); }
                 }, i18n("agent.plugin.market.next")),
                 new ToolbarAction(null, SVG.EXTENSION,
-                        () -> Controllers.navigate(AgentPages.extensions()),
+                        () -> AgentPages.openInstanceCategory(toolCategory ? "TOOLS" : "PLUGINS"),
                         i18n("agent.plugin.market.installed")));
     }
 

@@ -10,6 +10,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.jackhuang.hmcl.Metadata;
+import org.jackhuang.hmcl.util.versioning.VersionNumber;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -120,7 +121,7 @@ public final class DshModService {
                 if (!linked) versions.add(version);
             }
         }
-        versions.sort(Comparator.reverseOrder());
+        versions.sort((first, second) -> VersionNumber.compare(second, first));
         return List.copyOf(versions);
     }
 
@@ -180,7 +181,8 @@ public final class DshModService {
         @Nullable String localPackageName = action == Action.INSTALL && spec != null && isLocalTarball(spec)
                 ? packageNameFromTarball(Path.of(spec)) : null;
         String normalizedRegistry = AgentNetworkService.validateRegistryUrlForCommand(registry);
-        Path runtime = ensureCore(runtimes, version, normalizedRegistry);
+        String resolvedVersion = resolveCoreVersionForMod(runtimes, version, normalizedRegistry);
+        Path runtime = ensureCore(runtimes, resolvedVersion, normalizedRegistry);
         String concreteVersion = runtime.getFileName().toString();
         Path cli = runtime.resolve("node_modules")
                 .resolve("@deepseek-ai").resolve("dsh").resolve("lib").resolve("bin.js");
@@ -232,6 +234,22 @@ public final class DshModService {
             }
         }
         return new Result(output, true, concreteVersion, localPackageName);
+    }
+
+    /// Resolves `latest` for a Mod operation, using a complete cached Core if the catalog is unreachable.
+    static String resolveCoreVersionForMod(Path runtimes, String version, String registry)
+            throws IOException, InterruptedException {
+        if (!"latest".equals(version)) return version;
+        try {
+            return AgentNetworkService.fetchDshCatalog(registry).latest();
+        } catch (IOException catalogError) {
+            if (!AgentNetworkService.isTransientTransportFailure(catalogError)) throw catalogError;
+            List<String> cached = installedCoreVersions(runtimes);
+            if (cached.isEmpty()) {
+                throw new IOException("Cannot resolve latest DSH Core and no downloaded version is available", catalogError);
+            }
+            return cached.get(0);
+        }
     }
 
     /// Recognizes an absolute npm package archive passed through the native plugin CLI.

@@ -8,8 +8,6 @@ package org.jackhuang.hmcl.ui.agent;
 
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
-import javafx.collections.transformation.FilteredList;
-import org.jackhuang.hmcl.agent.AgentExtension;
 import org.jackhuang.hmcl.agent.AgentInstance;
 import org.jackhuang.hmcl.agent.AgentRepository;
 import org.jackhuang.hmcl.ui.FXUtils;
@@ -22,9 +20,7 @@ import org.jackhuang.hmcl.ui.decorator.DecoratorAnimatedPage;
 import org.jackhuang.hmcl.ui.decorator.DecoratorPage;
 import org.jetbrains.annotations.NotNullByDefault;
 
-import java.io.IOException;
 import java.util.Locale;
-import java.util.Set;
 
 import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 
@@ -41,12 +37,12 @@ public final class AgentDownloadsPage extends DecoratorAnimatedPage implements D
     private final TabHeader.Tab<AgentEditorPage> packTab = new TabHeader.Tab<>("dshPackDownloads");
     /// Package-backed Plugin and Bundle download tab.
     private final TabHeader.Tab<AgentPluginMarketPage> pluginTab = new TabHeader.Tab<>("dshPluginDownloads");
-    /// MCP metadata and configuration tab.
-    private final TabHeader.Tab<AgentListPage<AgentExtension>> mcpTab = new TabHeader.Tab<>("dshMcpDownloads");
-    /// Skill metadata and configuration tab.
-    private final TabHeader.Tab<AgentListPage<AgentExtension>> skillTab = new TabHeader.Tab<>("dshSkillDownloads");
-    /// Tool metadata and configuration tab.
-    private final TabHeader.Tab<AgentListPage<AgentExtension>> toolTab = new TabHeader.Tab<>("dshToolDownloads");
+    /// MCP server add actions.
+    private final TabHeader.Tab<AgentEditorPage> mcpTab = new TabHeader.Tab<>("dshMcpDownloads");
+    /// Skill download and import actions.
+    private final TabHeader.Tab<AgentEditorPage> skillTab = new TabHeader.Tab<>("dshSkillDownloads");
+    /// npm tool plugin download catalog.
+    private final TabHeader.Tab<AgentPluginMarketPage> toolTab = new TabHeader.Tab<>("dshToolDownloads");
     /// Upstream HMCL navigation controller for the content tabs.
     private final TabHeader tab;
 
@@ -55,9 +51,9 @@ public final class AgentDownloadsPage extends DecoratorAnimatedPage implements D
         coreTab.setNodeSupplier(AgentCoreDownloadPage::new);
         packTab.setNodeSupplier(this::packContent);
         pluginTab.setNodeSupplier(AgentPluginMarketPage::new);
-        mcpTab.setNodeSupplier(() -> extensionContent("MCP", i18n("agent.downloads.mcp")));
-        skillTab.setNodeSupplier(() -> extensionContent("Skill", i18n("agent.downloads.skills")));
-        toolTab.setNodeSupplier(() -> extensionContent("Tool", i18n("agent.downloads.tools")));
+        mcpTab.setNodeSupplier(this::mcpContent);
+        skillTab.setNodeSupplier(this::skillContent);
+        toolTab.setNodeSupplier(() -> new AgentPluginMarketPage("dsh tool"));
         tab = new TabHeader(transitionPane, coreTab, packTab, pluginTab, mcpTab, skillTab, toolTab);
         tab.select(coreTab);
 
@@ -80,6 +76,11 @@ public final class AgentDownloadsPage extends DecoratorAnimatedPage implements D
         tab.select(pluginTab, false);
     }
 
+    /// Selects npm packages providing DSH tools.
+    public void showTools() {
+        tab.select(toolTab, false);
+    }
+
     /// Selects the online DSH Core version catalog.
     public void showCore() {
         tab.select(coreTab, false);
@@ -98,29 +99,26 @@ public final class AgentDownloadsPage extends DecoratorAnimatedPage implements D
         return page;
     }
 
-    /// Filters one category while retaining the shared HMCL search and action list controls.
-    private AgentListPage<AgentExtension> extensionContent(String category, String title) {
-        AgentRepository repository = AgentRepository.get();
-        AgentInstance selected = repository.getSelectedInstance();
-        if (selected != null) {
-            try {
-                repository.refreshInstalledMods(selected);
-            } catch (IOException ignored) {
-                // The list remains usable; the selected Profile may not exist yet.
-            }
-        }
-        FilteredList<AgentExtension> items = new FilteredList<>(repository.getExtensions(), extension ->
-                category.equalsIgnoreCase(extension.typeProperty().get()));
-        return new AgentListPage<>(title, items,
-                () -> repository.addExtension(category), repository::load, AgentPages::openExtension,
-                AgentPages::openExtension,
-                AgentPages::removeModEntry,
-                null,
-                extension -> Set.of("filesystem", "browser", "skills", "mcp-client").contains(extension.getId())
-                        || repository.getSelectedInstance() != null
-                        && repository.hasExtension(repository.getSelectedInstance(), extension),
-                repository.selectedInstanceProperty(), i18n("agent.extension.add"),
-                i18n("agent.extension.toggle"), false, true);
+    /// Adds MCP endpoints to the current isolated instance.
+    private AgentEditorPage mcpContent() {
+        return new AgentEditorPage(i18n("agent.downloads.mcp"))
+                .addAction(i18n("agent.downloads.mcp.http"), i18n("agent.downloads.mcp.http.subtitle"),
+                        SVG.PUBLIC, AgentPages::addHttpMcp)
+                .addAction(i18n("agent.downloads.mcp.stdio"), i18n("agent.downloads.mcp.stdio.subtitle"),
+                        SVG.ADD_CIRCLE, AgentPages::addStdioMcp)
+                .addAction(i18n("agent.downloads.installed"), i18n("agent.downloads.manage.subtitle"),
+                        SVG.EXTENSION, () -> AgentPages.openInstanceCategory("MCP"));
+    }
+
+    /// Downloads single-file skills or imports a local skill bundle into the current instance.
+    private AgentEditorPage skillContent() {
+        return new AgentEditorPage(i18n("agent.downloads.skills"))
+                .addAction(i18n("agent.downloads.skill.url"), i18n("agent.downloads.skill.url.subtitle"),
+                        SVG.DOWNLOAD, AgentPages::downloadSkill)
+                .addAction(i18n("agent.skill.import"), i18n("agent.skill.import.subtitle"),
+                        SVG.FOLDER_OPEN, AgentPages::importSelectedSkill)
+                .addAction(i18n("agent.downloads.installed"), i18n("agent.downloads.manage.subtitle"),
+                        SVG.EXTENSION, () -> AgentPages.openInstanceCategory("SKILLS"));
     }
 
     /// Returns the HMCL decorator title.

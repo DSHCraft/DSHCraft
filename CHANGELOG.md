@@ -1,5 +1,38 @@
 # Changelog
 
+## Instance selection, layout and resource downloads - 2026-10-01
+
+- Kept the wide instance browser separate from instance management. Management has one narrow category directory, an instance selector and a full-width editor; empty inherited editor sidebars no longer consume another 200 pixels.
+- Switching instances retains the chosen category and rebinds settings to the current repository object after reloads.
+- Downloads > MCP now adds HTTP or local stdio servers; Skills imports local folders or downloads public single-file SKILL.md URLs into the selected isolated instance. Installed-management links open the corresponding instance category.
+- Tools now provides a working npm download search for tool plugins. Tools use DSH's native plugin mechanism and are managed together with other plugins.
+- Mod operations can use a complete downloaded Core when resolving `latest` fails. Cached versions are sorted numerically; successful operations record the concrete Core version on the instance.
+- Integrated the newer local resource-category and bounded Core-catalog retry improvements before publishing this preview.
+- Fixed Authenticode packaging for the embedded JAR: reserve the signing certificate tail as a ZIP comment before final signing so Java's native launcher accepts the signed EXE. Source archives now include the required Windows build/signing helpers.
+
+## 2026-09-30 — Separate Plugins, MCP and Skills
+
+- Split instance resources into three native management categories with distinct add actions, status labels and editor fields.
+- Remove Core capability markers from operational lists; display them read-only under version management.
+- Remove generic resource launch/toggle controls and editable resource types.
+- Move isolated preview snapshots and data out of Windows Temp to .hmcl/previews/, preventing the preview workflow from triggering the temporary-directory warning.
+
+
+## 2026-09-30 — Core installation failure recovery
+
+- Retry interrupted Core metadata reads up to three attempts without changing the selected registry or weakening TLS validation.
+- Replace the default installation stack-trace wall with a compact error and explicit retry/settings/details actions.
+- Add four deterministic recovery regressions; full build and 282-test suite passed with 10 optional skips.
+
+
+## 2026-09-30 — HMCL-native instance navigation
+
+- Restored a wide instance browser and separate instance management page with HMCL sidebar navigation, replacing the narrow list/editor split and horizontal header tabs.
+- Moved creation/import/settings to the browser rail and grouped instance settings into readable native sections.
+- Resolved management controls against the current repository instance after reload and when returning to the page, preventing stale name bindings.
+- Verified full build/tests and isolated JavaFX layout, model replacement, persistence and category-navigation checks; final desktop click acceptance remains explicitly tracked.
+
+
 ## DSH Plugin Market - 2026-09-29
 
 - Embedded the HMCL-native npm Plugin Market directly in Downloads > Plugins, with remote search, paging, retry, package version selection, and built-in or custom npm sources.

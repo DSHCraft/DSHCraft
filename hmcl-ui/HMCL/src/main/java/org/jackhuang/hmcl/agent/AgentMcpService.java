@@ -127,6 +127,11 @@ public final class AgentMcpService {
         return location != null && location.trim().startsWith(STDIO_PREFIX);
     }
 
+    /// Validates a local server descriptor before accepting the add dialog.
+    public static void validateStdioDescriptor(String descriptor) throws IOException {
+        parseStdio(STDIO_PREFIX + (descriptor == null ? "" : descriptor.trim()));
+    }
+
     /// Parses a bounded JSON object with only `command` and `args`; no environment or shell is accepted.
     private static StdioCommand parseStdio(String location) throws IOException {
         try {
